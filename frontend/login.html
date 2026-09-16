@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вход — Расходы</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script>
+    try {
+      const theme = localStorage.getItem("theme");
+      if (theme) document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="login-page">
+    <div class="card login-card">
+      <h1>💰 Трекер расходов</h1>
+      <p class="sub">Войдите, чтобы продолжить</p>
+      <div id="alert-box"></div>
+      <form id="login-form">
+        <div class="field">
+          <label for="username">Логин</label>
+          <input id="username" name="username" type="text" autocomplete="username" required autofocus />
+        </div>
+        <div class="field">
+          <label for="password">Пароль</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block" id="submit-btn">Войти</button>
+      </form>
+    </div>
+  </div>
+
+  <script type="module">
+    import { api, ApiError } from "/js/api.js";
+
+    const form = document.getElementById("login-form");
+    const alertBox = document.getElementById("alert-box");
+    const submitBtn = document.getElementById("submit-btn");
+
+    api.get("/auth/me").then(() => {
+      location.href = "/index.html";
+    }).catch(() => {});
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      alertBox.innerHTML = "";
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Входим…";
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value;
+      try {
+        await api.post("/auth/login", { username, password });
+        location.href = "/index.html";
+      } catch (err) {
+        const message = err instanceof ApiError ? err.detail : "Не удалось войти";
+        alertBox.innerHTML = `<div class="alert alert-danger">${typeof message === "string" ? message : "Не удалось войти"}</div>`;
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Войти";
+      }
+    });
+  </script>
+</body>
+</html>

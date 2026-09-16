@@ -1,0 +1,33 @@
+{
+	# Port 443 is taken by another service (Hysteria) on this host — serve
+	# HTTPS on 8443 instead. Port 80 stays free and is still used for the
+	# ACME HTTP-01 challenge that gets the certificate for {$DOMAIN}.
+	https_port 8443
+}
+
+(app) {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+http://{$DOMAIN:localhost} {
+	# Force HTTPS for any real deployment, but leave localhost alone so
+	# local dev keeps working over plain HTTP with no cert to trust.
+	@not_localhost not host localhost
+	redir @not_localhost https://{host}:8443{uri} permanent
+
+	import app
+}
+
+https://{$DOMAIN:localhost} {
+	import app
+}

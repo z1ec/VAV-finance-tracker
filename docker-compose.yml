@@ -1,0 +1,39 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      USER1_USERNAME: ${USER1_USERNAME}
+      USER1_PASSWORD: ${USER1_PASSWORD}
+      USER2_USERNAME: ${USER2_USERNAME}
+      USER2_PASSWORD: ${USER2_PASSWORD}
+      DB_PATH: /data/expenses.db
+      TZ: ${TZ:-Europe/Budapest}
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./data:/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "8443:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

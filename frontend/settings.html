@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Настройки — Расходы</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script>
+    try {
+      const theme = localStorage.getItem("theme");
+      if (theme) document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="app-header" id="app-header"></header>
+
+  <main class="app-main">
+    <h1 style="margin-bottom: 14px">Настройки</h1>
+    <div id="settings-state"></div>
+
+    <div id="settings-content" hidden>
+      <div class="card">
+        <div class="flex-between">
+          <div class="card-title mb-0">Категории</div>
+          <button type="button" class="btn btn-primary btn-sm" id="add-category-btn">+ Категория</button>
+        </div>
+        <div id="categories-list"></div>
+      </div>
+
+      <div class="card mt-16">
+        <div class="card-title">Месячные лимиты</div>
+        <div class="field">
+          <label for="total-budget-input">Общий бюджет за месяц (HUF)</label>
+          <input type="number" id="total-budget-input" min="0" step="1" placeholder="Не задан" />
+        </div>
+        <div id="category-budgets-list"></div>
+        <button type="button" class="btn btn-primary btn-sm mt-16" id="save-budgets-btn">Сохранить лимиты</button>
+      </div>
+
+      <div class="card mt-16">
+        <div class="flex-between">
+          <div class="card-title mb-0">Курсы валют</div>
+          <button type="button" class="btn btn-ghost btn-sm" id="refresh-rates-btn">🔄 Обновить</button>
+        </div>
+        <div id="rates-list"></div>
+        <details class="collapsible mt-16">
+          <summary>Задать курс вручную</summary>
+          <form id="manual-rate-form">
+            <div class="field-row">
+              <div class="field">
+                <label for="manual-rate-date">Дата</label>
+                <input type="date" id="manual-rate-date" required />
+              </div>
+              <div class="field" style="max-width: 110px">
+                <label for="manual-rate-currency">Валюта</label>
+                <select id="manual-rate-currency">
+                  <option value="EUR">EUR</option>
+                  <option value="RUB">RUB</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="manual-rate-value">Курс к HUF</label>
+                <input type="number" id="manual-rate-value" step="0.00000001" min="0" required />
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">Сохранить курс</button>
+          </form>
+        </details>
+      </div>
+
+      <div class="card mt-16">
+        <div class="card-title">Корзина <span class="text-muted" style="font-weight: 400; text-transform: none">(удалённые за 30 дней)</span></div>
+        <div id="trash-list"></div>
+      </div>
+    </div>
+  </main>
+
+  <nav class="mobile-tabbar" id="mobile-tabbar"></nav>
+
+  <div class="modal-backdrop" id="category-modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="category-modal-title">Добавить категорию</h2>
+        <button type="button" class="btn btn-ghost btn-icon" id="category-modal-close">✕</button>
+      </div>
+      <div id="category-form-error"></div>
+      <form id="category-form">
+        <div class="field">
+          <label for="category-name">Название</label>
+          <input type="text" id="category-name" maxlength="100" required />
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="category-color">Цвет</label>
+            <input type="color" id="category-color" value="#4f6ef7" />
+          </div>
+          <div class="field">
+            <label for="category-icon">Emoji</label>
+            <input type="text" id="category-icon" maxlength="8" placeholder="🛒" />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="category-cancel-btn">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/js/settings.js"></script>
+</body>
+</html>

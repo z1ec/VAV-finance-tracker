@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Операции — Расходы</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script>
+    try {
+      const theme = localStorage.getItem("theme");
+      if (theme) document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="app-header" id="app-header"></header>
+
+  <main class="app-main">
+    <div class="flex-between" style="margin-bottom: 14px">
+      <h1>Операции</h1>
+      <div class="flex gap-8">
+        <button id="export-btn" class="btn btn-ghost btn-sm">⬇️ Экспорт CSV</button>
+        <button id="add-btn" class="btn btn-primary btn-sm" hidden>+ Добавить</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="filters-bar">
+        <div class="preset-group" id="period-presets">
+          <button type="button" data-preset="today">Сегодня</button>
+          <button type="button" data-preset="week">Неделя</button>
+          <button type="button" data-preset="month" class="active">Месяц</button>
+          <button type="button" data-preset="year">Год</button>
+          <button type="button" data-preset="custom">Период</button>
+        </div>
+        <div class="field-row" id="custom-range" hidden>
+          <div class="field">
+            <label for="date-from">С</label>
+            <input type="date" id="date-from" />
+          </div>
+          <div class="field">
+            <label for="date-to">По</label>
+            <input type="date" id="date-to" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Категории</label>
+          <details class="cat-filter" id="category-filter-details">
+            <summary class="btn btn-ghost btn-sm" id="category-filter-summary">Все категории</summary>
+            <div class="cat-filter__panel" id="category-filter-panel"></div>
+          </details>
+        </div>
+        <div class="field">
+          <label for="currency-filter">Валюта</label>
+          <select id="currency-filter" class="select-compact">
+            <option value="">Все</option>
+            <option value="HUF">HUF</option>
+            <option value="EUR">EUR</option>
+            <option value="RUB">RUB</option>
+          </select>
+        </div>
+        <div class="field search-input">
+          <label for="search-input">Поиск</label>
+          <input type="search" id="search-input" placeholder="По комментарию…" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <div class="card-title mb-0">Итого за период</div>
+        <div id="period-total" style="font-size: 22px; font-weight: 700">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="expenses-state"></div>
+      <div class="table-wrap">
+        <table class="data-table" id="expenses-table" hidden>
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Категория</th>
+              <th>Комментарий</th>
+              <th class="text-right">Сумма</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="expenses-tbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </main>
+
+  <nav class="mobile-tabbar" id="mobile-tabbar"></nav>
+
+  <div class="modal-backdrop" id="expense-modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="expense-modal-title">Добавить трату</h2>
+        <button type="button" class="btn btn-ghost btn-icon" id="expense-modal-close">✕</button>
+      </div>
+      <div id="expense-form-error"></div>
+      <form id="expense-form">
+        <div class="field-row">
+          <div class="field">
+            <label for="expense-amount">Сумма</label>
+            <input type="number" id="expense-amount" step="0.01" min="0.01" required />
+          </div>
+          <div class="field" style="max-width: 110px">
+            <label for="expense-currency">Валюта</label>
+            <select id="expense-currency">
+              <option value="HUF">HUF</option>
+              <option value="EUR">EUR</option>
+              <option value="RUB">RUB</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="expense-category">Категория</label>
+          <select id="expense-category" required></select>
+        </div>
+        <div class="field">
+          <label for="expense-datetime">Дата и время (Budapest)</label>
+          <input type="datetime-local" id="expense-datetime" required />
+        </div>
+        <div class="field">
+          <label for="expense-comment">Комментарий</label>
+          <textarea id="expense-comment" maxlength="500" placeholder="Необязательно"></textarea>
+        </div>
+        <details class="collapsible">
+          <summary>Указать курс вручную</summary>
+          <div class="field">
+            <label for="expense-rate">Курс к HUF (сколько HUF за 1 единицу валюты)</label>
+            <input type="number" id="expense-rate" step="0.00000001" min="0" placeholder="Определится автоматически" />
+          </div>
+        </details>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="expense-cancel-btn">Отмена</button>
+          <button type="submit" class="btn btn-primary" id="expense-save-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/js/expenses.js"></script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Дашборд — Расходы</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script>
+    try {
+      const theme = localStorage.getItem("theme");
+      if (theme) document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="app-header" id="app-header"></header>
+
+  <main class="app-main">
+    <h1 style="margin-bottom: 14px">Дашборд</h1>
+
+    <div class="card">
+      <div class="filters-bar">
+        <div class="preset-group" id="period-presets">
+          <button type="button" data-preset="today">Сегодня</button>
+          <button type="button" data-preset="week">Неделя</button>
+          <button type="button" data-preset="month" class="active">Месяц</button>
+          <button type="button" data-preset="year">Год</button>
+          <button type="button" data-preset="custom">Период</button>
+        </div>
+        <div class="field-row" id="custom-range" hidden>
+          <div class="field">
+            <label for="date-from">С</label>
+            <input type="date" id="date-from" />
+          </div>
+          <div class="field">
+            <label for="date-to">По</label>
+            <input type="date" id="date-to" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Категории</label>
+          <details class="cat-filter" id="category-filter-details">
+            <summary class="btn btn-ghost btn-sm" id="category-filter-summary">Все категории</summary>
+            <div class="cat-filter__panel" id="category-filter-panel"></div>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <div id="dashboard-state"></div>
+
+    <div id="dashboard-content" hidden>
+      <div class="grid grid-stats">
+        <div class="card stat-tile">
+          <div class="stat-value" id="stat-total">—</div>
+          <div class="stat-label">Всего за период</div>
+        </div>
+        <div class="card stat-tile">
+          <div class="stat-value" id="stat-avg-day">—</div>
+          <div class="stat-label">Среднее в день</div>
+        </div>
+        <div class="card stat-tile">
+          <div class="stat-value" id="stat-avg-expense">—</div>
+          <div class="stat-label">Средний чек</div>
+        </div>
+        <div class="card stat-tile">
+          <div class="stat-value" id="stat-change">—</div>
+          <div class="stat-label">К прошлому периоду</div>
+        </div>
+      </div>
+
+      <div class="grid grid-2 mt-16">
+        <div class="card">
+          <div class="card-title">По категориям</div>
+          <div class="chart-box" id="chart-category-box"><canvas id="chart-category"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-title">По месяцам (12 месяцев)</div>
+          <div class="chart-box"><canvas id="chart-month"></canvas></div>
+        </div>
+      </div>
+
+      <div class="grid grid-2 mt-16">
+        <div class="card">
+          <div class="card-title">Бюджеты по категориям</div>
+          <div id="budgets-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">По валютам</div>
+          <div id="currency-breakdown"></div>
+        </div>
+      </div>
+
+      <div class="card mt-16">
+        <div class="card-title">Топ-10 крупнейших трат</div>
+        <div class="table-wrap">
+          <table class="data-table" id="top-table">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Категория</th>
+                <th>Комментарий</th>
+                <th class="text-right">Сумма</th>
+              </tr>
+            </thead>
+            <tbody id="top-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <nav class="mobile-tabbar" id="mobile-tabbar"></nav>
+
+  <script src="/vendor/chart.umd.min.js"></script>
+  <script type="module" src="/js/dashboard.js"></script>
+</body>
+</html>

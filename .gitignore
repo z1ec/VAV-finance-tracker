@@ -1,0 +1,9 @@
+.env
+data/
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/tests/test_data/
+*.pyc
+.DS_Store
