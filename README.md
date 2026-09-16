@@ -27,69 +27,88 @@ open http://localhost   # или просто откройте в браузер
 см. раздел [«Деплой на сервер»](#деплой-на-сервер-https-на-порту-8443) ниже
 (HTTPS отдаётся на порту 8443, а не 443).
 
-## Деплой на сервер (HTTPS на порту 8443)
+## Деплой на сервер
 
-На сервере порт 443 занят Hysteria (VPN) — его трогать нельзя. Поэтому
-Caddy отдаёт HTTPS на **8443**, а порт 80 остаётся свободным и используется
-только для ACME HTTP-01 challenge (получение сертификата Let's Encrypt),
-без раздачи сайта. `Caddyfile` уже настроен под это (`https_port 8443` +
-редирект на `https://{host}:8443` для любого хоста, кроме `localhost`).
+Есть два сценария в зависимости от того, свободны ли порты 80/443 на хосте.
 
-1. **Выпустить поддомен.** Нужен реальный домен/поддомен с A-записью,
-   указывающей на публичный IP сервера — Let's Encrypt не выдаёт
-   сертификат на голый IP, и без домена ACME-проверка невозможна. Например:
-   `expenses.example.com A <IP сервера>`. Дождитесь, пока запись разрешится
-   (`dig +short expenses.example.com`).
+### Вариант A — сервер выделен под этот проект (порты 80/443 свободны)
 
-2. **Открыть порты в файрволе** (443 не трогаем — он занят Hysteria):
+Используются `docker-compose.yml` + `Caddyfile` — Caddy сам получает
+сертификат Let's Encrypt и отдаёт сайт по HTTPS.
+
+1. Выпустить поддомен с A-записью на IP сервера (на голый IP сертификат не
+   выдаётся). Дождаться, пока DNS разрешится: `dig +short expenses.example.com`.
+2. `cp .env.example .env`, заполнить `SECRET_KEY` (`openssl rand -hex 32`),
+   пароли пользователей и `DOMAIN=expenses.example.com`.
+3. `docker compose up -d --build`.
+4. Проверить: `docker compose logs caddy --tail 50` — искать
+   `certificate obtained successfully`. Сайт: `https://expenses.example.com:8443`
+   (HTTPS отдаётся на **8443**, не на 443 — см. Caddyfile; порт 80 нужен
+   только для ACME-проверки).
+
+### Вариант B — на сервере уже есть другой сайт на 80/443 (nginx/Apache/Caddy)
+
+Именно этот случай, если на хосте уже висит другой сайт и/или VPN
+(например, Hysteria) — трогать существующие 80/443 нельзя. Тогда наш Caddy
+вообще не публикует эти порты: он слушает только `127.0.0.1:8080`
+(изнутри сервера), TLS не запрашивает, а существующий веб-сервер
+проксирует на него и сам занимается сертификатом.
+
+Используются `docker-compose.behind-proxy.yml` + `Caddyfile.behind-proxy`.
+
+1. Выпустить поддомен с A-записью на IP сервера (у регистратора/в вашей DNS-зоне),
+   например `finance.example.com A <IP сервера>`.
+
+2. Настроить `.env` как обычно (`cp .env.example .env`, `SECRET_KEY`,
+   пароли, `DOMAIN=finance.example.com` — используется backend'ом для
+   флага `secure` на cookie-сессии, публичные порты при этом не занимает).
+
+3. Поднять стек на внутреннем порту:
    ```bash
-   sudo ufw allow 80/tcp     # ACME HTTP-01 challenge
-   sudo ufw allow 8443/tcp   # сам сайт
+   docker compose -f docker-compose.behind-proxy.yml up -d --build
+   curl -I http://127.0.0.1:8080/api/health   # должно быть 200, с самого сервера
    ```
 
-3. **Склонировать репозиторий на сервер и настроить `.env`:**
+4. Добавить сайт в существующий nginx (замените домен и, если 8080 занят
+   чем-то ещё, поменяйте порт — он должен совпадать с `CADDY_INTERNAL_PORT`
+   из `.env`, по умолчанию 8080):
+   ```nginx
+   # /etc/nginx/sites-available/finance.example.com
+   server {
+       listen 80;
+       listen [::]:80;
+       server_name finance.example.com;
+
+       location / {
+           proxy_pass http://127.0.0.1:8080;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+   }
+   ```
    ```bash
-   git clone <репозиторий> expense-tracker && cd expense-tracker
-   cp .env.example .env
-   ```
-   В `.env` обязательно указать:
-   ```
-   SECRET_KEY=<сгенерировать: openssl rand -hex 32>
-   ADMIN_USERNAME=admin
-   ADMIN_PASSWORD=<надёжный пароль>
-   USER1_USERNAME=...
-   USER1_PASSWORD=<надёжный пароль>
-   USER2_USERNAME=...
-   USER2_PASSWORD=<надёжный пароль>
-   DOMAIN=expenses.example.com
+   sudo ln -s /etc/nginx/sites-available/finance.example.com /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
    ```
 
-4. **Запустить:**
+5. Получить сертификат через certbot (если ещё не установлен:
+   `sudo apt install certbot python3-certbot-nginx`):
    ```bash
-   docker compose up -d --build
+   sudo certbot --nginx -d finance.example.com
    ```
-   Caddy сам получит сертификат Let's Encrypt при первом запросе к домену
-   (через порт 80) и будет отдавать сайт по HTTPS на 8443. Проверить:
-   ```bash
-   curl -I http://expenses.example.com/          # -> 301 на https://…:8443/
-   curl -I https://expenses.example.com:8443/api/health
-   docker compose logs caddy --tail 50            # искать "certificate obtained successfully"
-   ```
-   Сайт открывается в браузере по адресу
-   **`https://expenses.example.com:8443`**.
+   Certbot сам допишет в конфиг `listen 443 ssl` и редирект с 80 на 443,
+   перезагрузит nginx. Сайт: `https://finance.example.com` (обычный 443,
+   которым теперь занимается nginx, а не наш Caddy).
 
-5. **Обновление после изменений в коде:**
-   ```bash
-   git pull
-   docker compose up -d --build
-   ```
-
-**Если поддомен пока не готов** — можно временно оставить `DOMAIN=localhost`
-в `.env`: сайт будет работать по HTTP на порту 80 (без TLS) и по
-самоподписанному сертификату на 8443 (с предупреждением браузера). Как
-только DNS-запись появится, поменяйте `DOMAIN` в `.env` и перезапустите
-`docker compose up -d` — Caddy сам всё переключит и получит настоящий
-сертификат.
+**Обновление после изменений в коде** (для обоих вариантов — используйте
+тот же compose-файл, каким поднимали):
+```bash
+git pull
+docker compose up -d --build                              # вариант A
+docker compose -f docker-compose.behind-proxy.yml up -d --build   # вариант B
+```
 
 ---
 

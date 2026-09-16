@@ -1,0 +1,17 @@
+# Used when an existing web server (nginx, another Caddy, Apache, ...)
+# already owns the host's :80/:443 and will reverse-proxy to this container.
+# No TLS, no ACME, no host matching here — the outer proxy handles all of
+# that and simply forwards everything relevant to this internal port.
+:80 {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
