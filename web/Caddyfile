@@ -3,6 +3,10 @@
 # - https://{$DOMAIN}:8443 → permanent redirect to the same path without the port, so the old
 #   bookmarks from the previous server (HTTPS on 8443) keep working.
 # - http://localhost stays plain HTTP for local development (DOMAIN=localhost).
+# - Any request carrying an Authorization header is refused with 403 (ADR-0004): the bot's
+#   service token works only inside the Docker network vav-internal, never through this proxy.
+#   reverse_proxy also always sets X-Forwarded-For (client-sent values are replaced, no
+#   trusted_proxies), which the backend uses as a second check.
 
 {
 	servers {
@@ -14,14 +18,20 @@
 (app) {
 	encode gzip
 
-	handle /api/* {
-		reverse_proxy backend:8000
-	}
+	# `route` keeps the order exactly as written: the Authorization check runs first.
+	route {
+		@authorization header Authorization *
+		respond @authorization "Forbidden" 403
 
-	handle {
-		root * /srv
-		try_files {path} /index.html
-		file_server
+		handle /api/* {
+			reverse_proxy backend:8000
+		}
+
+		handle {
+			root * /srv
+			try_files {path} /index.html
+			file_server
+		}
 	}
 }
 

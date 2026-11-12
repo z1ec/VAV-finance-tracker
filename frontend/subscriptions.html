@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Подписки — Расходы</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script>
+    try {
+      const theme = localStorage.getItem("theme");
+      if (theme) document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="app-header" id="app-header"></header>
+
+  <main class="app-main">
+    <div class="flex-between" style="margin-bottom: 14px">
+      <h1>Подписки</h1>
+      <button id="add-sub-btn" class="btn btn-primary btn-sm" hidden>+ Подписка</button>
+    </div>
+
+    <div id="subs-state"></div>
+
+    <div id="subs-content" hidden>
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-title">В месяц</div>
+          <div class="subs-total" id="subs-monthly-total">—</div>
+          <div class="text-muted" style="font-size: 12px" id="subs-monthly-note"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Ждут суммы</div>
+          <div id="pending-list"></div>
+        </div>
+      </div>
+
+      <div class="card mt-16">
+        <div class="card-title">Все подписки</div>
+        <div class="table-wrap">
+          <table class="data-table" id="subs-table">
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th class="text-right">Сумма</th>
+                <th>Период</th>
+                <th>Следующее списание</th>
+                <th>Категория</th>
+                <th>Статус</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="subs-tbody"></tbody>
+          </table>
+        </div>
+        <div id="subs-empty" class="empty-state" hidden>Подписок пока нет</div>
+      </div>
+    </div>
+  </main>
+
+  <nav class="mobile-tabbar" id="mobile-tabbar"></nav>
+
+  <!-- Add / edit subscription -->
+  <div class="modal-backdrop" id="sub-modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="sub-modal-title">Новая подписка</h2>
+        <button type="button" class="btn btn-ghost btn-icon" id="sub-modal-close">✕</button>
+      </div>
+      <div id="sub-form-error"></div>
+      <form id="sub-form">
+        <div class="field">
+          <label for="sub-name">Название</label>
+          <input type="text" id="sub-name" maxlength="100" required placeholder="Netflix" />
+        </div>
+        <div class="field">
+          <label for="sub-amount-type">Сумма</label>
+          <select id="sub-amount-type">
+            <option value="fixed">Фиксированная — списывается автоматически</option>
+            <option value="variable">Плавающая — бот спросит сумму</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field" id="sub-amount-field">
+            <label for="sub-amount">Сумма</label>
+            <input type="number" id="sub-amount" step="0.01" min="0.01" />
+          </div>
+          <div class="field" style="max-width: 110px">
+            <label for="sub-currency">Валюта</label>
+            <select id="sub-currency">
+              <option value="HUF">HUF</option>
+              <option value="EUR">EUR</option>
+              <option value="RUB">RUB</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="sub-category">Категория</label>
+          <select id="sub-category" required></select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="sub-period">Период</label>
+            <select id="sub-period">
+              <option value="monthly">Месяц</option>
+              <option value="weekly">Неделя</option>
+              <option value="yearly">Год</option>
+            </select>
+          </div>
+          <div class="field" style="max-width: 120px">
+            <label for="sub-interval">Каждые</label>
+            <input type="number" id="sub-interval" min="1" max="120" step="1" value="1" required />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="sub-next-date">Следующее списание</label>
+            <input type="date" id="sub-next-date" required />
+          </div>
+          <div class="field" id="sub-anchor-field" style="max-width: 140px">
+            <label for="sub-anchor">День месяца</label>
+            <input type="number" id="sub-anchor" min="1" max="31" step="1" placeholder="авто" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="sub-remind">Напоминать за (дней)</label>
+          <input type="number" id="sub-remind" min="0" max="60" step="1" value="3" required />
+        </div>
+        <div class="field">
+          <label for="sub-comment">Комментарий</label>
+          <textarea id="sub-comment" maxlength="500" placeholder="Необязательно"></textarea>
+        </div>
+        <div class="field checkbox-row" id="sub-active-row" hidden>
+          <input type="checkbox" id="sub-active" />
+          <label for="sub-active">Активна</label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="sub-cancel-btn">Отмена</button>
+          <button type="submit" class="btn btn-primary" id="sub-save-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Enter the amount of a pending charge -->
+  <div class="modal-backdrop" id="pay-modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="pay-modal-title">Внести сумму</h2>
+        <button type="button" class="btn btn-ghost btn-icon" id="pay-modal-close">✕</button>
+      </div>
+      <div id="pay-form-error"></div>
+      <form id="pay-form">
+        <div class="field-row">
+          <div class="field">
+            <label for="pay-amount">Сумма</label>
+            <input type="number" id="pay-amount" step="0.01" min="0.01" required />
+          </div>
+          <div class="field" style="max-width: 110px">
+            <label for="pay-currency">Валюта</label>
+            <select id="pay-currency">
+              <option value="HUF">HUF</option>
+              <option value="EUR">EUR</option>
+              <option value="RUB">RUB</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="pay-datetime">Дата и время (Budapest)</label>
+          <input type="datetime-local" id="pay-datetime" required />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="pay-cancel-btn">Отмена</button>
+          <button type="submit" class="btn btn-primary" id="pay-save-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/js/subscriptions.js"></script>
+</body>
+</html>

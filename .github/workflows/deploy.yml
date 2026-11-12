@@ -107,8 +107,9 @@ jobs:
       packages: read
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      # Not secrets: as variables they are not masked, so the log stays readable.
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
       DEPLOY_DIR: /opt/finance-tracker
       IMAGE_TAG: ${{ inputs.image_tag || needs.build.outputs.tag }}
     steps:
@@ -121,7 +122,7 @@ jobs:
           test -n "$IMAGE_TAG" || { echo "::error::no image tag to deploy"; exit 1; }
           [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::invalid image tag"; exit 1; }
           test -n "$DEPLOY_HOST" || { echo "::error::secret DEPLOY_HOST is missing"; exit 1; }
-          test -n "$DEPLOY_USER" || { echo "::error::secret DEPLOY_USER is missing"; exit 1; }
+          test -n "$DEPLOY_USER" || { echo "::error::variable DEPLOY_USER is missing"; exit 1; }
           echo "IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/finance-tracker" >> "$GITHUB_ENV"
 
       - name: Configure SSH (key + pinned host key)

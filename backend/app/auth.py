@@ -1,5 +1,8 @@
+import hashlib
+import hmac
 import time
 from collections import defaultdict
+from ipaddress import ip_address
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from passlib.context import CryptContext
@@ -33,6 +36,30 @@ def read_session_token(token: str) -> int | None:
     except (BadSignature, SignatureExpired):
         return None
     return data.get("user_id")
+
+
+# ---------- Bot service token ----------
+
+
+def bot_token_matches(token: str) -> bool:
+    """Constant-time comparison of the token's SHA-256 with ``BOT_API_TOKEN_SHA256``."""
+    expected = settings.bot_api_token_sha256.strip().lower()
+    if not expected or not token:
+        return False
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(digest, expected)
+
+
+def is_bot_network(host: str | None) -> bool:
+    """True if the TCP peer ``host`` is inside ``BOT_API_ALLOWED_NETWORKS`` (empty → never)."""
+    if not host:
+        return False
+    try:
+        address = ip_address(host)
+        networks = settings.bot_networks
+    except ValueError:
+        return False
+    return any(address in network for network in networks)
 
 
 # ---------- Login brute-force protection (in-memory, per-IP) ----------

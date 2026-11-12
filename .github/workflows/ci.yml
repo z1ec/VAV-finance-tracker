@@ -45,6 +45,11 @@ jobs:
       - name: Ruff (format)
         run: ruff format --check .
 
+      - name: Ruff (repo scripts)
+        run: |
+          ruff check --config pyproject.toml ../scripts
+          ruff format --config pyproject.toml --check ../scripts
+
       - name: Mypy
         run: mypy
 
@@ -72,7 +77,7 @@ jobs:
         run: uvx --from actionlint-py actionlint -color
 
       - name: shellcheck
-        run: uvx --from shellcheck-py shellcheck deploy/*.sh
+        run: uvx --from shellcheck-py shellcheck deploy/*.sh scripts/*.sh
 
       - name: deploy.sh dry-run tests
         working-directory: backend
@@ -156,6 +161,9 @@ jobs:
           fi
           grep -q "Refusing to start with insecure secrets" insecure.log
           if grep -q "canary" insecure.log; then echo "::error::secret value leaked"; exit 1; fi
+
+      - name: E2E bot API (throwaway containers, Caddy experiment, idempotency)
+        run: scripts/e2e_bot_api.sh finance-tracker-backend:ci finance-tracker-web:ci
 
       - name: Validate web Caddyfile
         run: |

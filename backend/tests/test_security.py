@@ -76,3 +76,44 @@ def test_localhost_only_warns(caplog: pytest.LogCaptureFixture) -> None:
     problems = [r.problem for r in caplog.records if hasattr(r, "problem")]
     assert any("SECRET_KEY" in p for p in problems)
     assert any("ADMIN_PASSWORD" in p for p in problems)
+
+
+# ---------- Bot API settings ----------
+
+GOOD_HASH = "a" * 64
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"bot_api_token_sha256": "not-hex"}, "BOT_API_TOKEN_SHA256"),
+        ({"bot_api_token_sha256": "a" * 63}, "BOT_API_TOKEN_SHA256"),
+        ({"bot_api_token_sha256": GOOD_HASH, "bot_api_username": ""}, "BOT_API_USERNAME"),
+        ({"bot_api_allowed_networks": "172.20.0.0/16,nonsense"}, "BOT_API_ALLOWED_NETWORKS"),
+        ({"bot_api_allowed_networks": "0.0.0.0/0"}, "BOT_API_ALLOWED_NETWORKS"),
+        ({"bot_api_allowed_networks": "81.85.92.119/32"}, "BOT_API_ALLOWED_NETWORKS"),
+    ],
+)
+def test_bad_bot_settings_are_rejected(overrides: dict[str, str], expected: str) -> None:
+    values = {"bot_api_username": "admin"} | overrides
+    problems = find_insecure_settings(make_settings(**values))
+    assert any(expected in p for p in problems), problems
+    with pytest.raises(InsecureConfigError):
+        check_secrets(make_settings(**values))
+
+
+def test_good_bot_settings_pass() -> None:
+    check_secrets(
+        make_settings(
+            bot_api_token_sha256=GOOD_HASH.upper(),
+            bot_api_username="admin",
+            bot_api_allowed_networks="172.20.0.0/16, 10.0.0.0/8",
+        )
+    )
+    # No hash → token disabled; networks alone are fine.
+    check_secrets(make_settings(bot_api_allowed_networks="172.20.0.0/16"))
+
+
+def test_bot_problems_never_contain_the_hash() -> None:
+    problems = find_insecure_settings(make_settings(bot_api_token_sha256="zz" + GOOD_HASH))
+    assert problems and all(GOOD_HASH not in p for p in problems)

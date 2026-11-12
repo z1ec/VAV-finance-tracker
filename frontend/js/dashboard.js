@@ -10,6 +10,9 @@ import {
   showApiError,
   periodPresetRange,
   initCategoryFilter,
+  sourceBadge,
+  formatLocalDate,
+  daysLeftLabel,
 } from "./common.js";
 
 const state = {
@@ -179,11 +182,51 @@ function renderTop(top, rates, displayCurrency) {
       <tr>
         <td data-label="Дата">${formatDateTime(e.occurred_at)}</td>
         <td data-label="Категория"><span class="category-chip"><span class="category-dot" style="background:${e.category.color}"></span>${e.category.icon || ""} ${escapeHtml(e.category.name)}</span></td>
-        <td data-label="Комментарий" class="comment-cell">${escapeHtml(e.comment || "")}</td>
+        <td data-label="Комментарий" class="comment-cell">${sourceBadge(e.source)}${escapeHtml(e.comment || "")}</td>
         <td data-label="Сумма" class="amount-cell">${original}${secondary}</td>
       </tr>`;
     })
     .join("");
+}
+
+function renderUpcoming(upcoming, summary, rates, displayCurrency) {
+  const el = document.getElementById("upcoming-list");
+  const monthlyEl = document.getElementById("subs-monthly");
+  if (!upcoming || !summary) {
+    el.innerHTML = `<div class="text-muted" style="padding: 8px 0">Не удалось загрузить подписки</div>`;
+    monthlyEl.textContent = "—";
+    return;
+  }
+  const conv = (huf) => (displayCurrency === "HUF" ? huf : huf / (rates[displayCurrency] || 1));
+  monthlyEl.textContent = formatAmount(conv(summary.monthly_total_huf), displayCurrency);
+
+  const rows = [
+    ...upcoming.pending.map(
+      (c) => `
+      <div class="list-row">
+        <div class="list-row__main">
+          <div class="list-row__title">${escapeHtml(c.subscription_name)} <span class="badge pending">ждёт суммы</span></div>
+          <div class="list-row__meta">${formatLocalDate(c.due_date)}</div>
+        </div>
+        <div class="list-row__side"><a href="/subscriptions.html" class="btn btn-ghost btn-sm">Внести</a></div>
+      </div>`
+    ),
+    ...upcoming.upcoming
+      .filter((u) => u.days_left <= upcoming.days)
+      .map(
+        (u) => `
+      <div class="list-row">
+        <div class="list-row__main">
+          <div class="list-row__title">${escapeHtml(u.name)}</div>
+          <div class="list-row__meta">${formatLocalDate(u.due_date)} · ${daysLeftLabel(u.days_left)}</div>
+        </div>
+        <div class="list-row__side">${
+          u.amount_type === "variable" ? `<span class="text-muted">плавающая</span>` : `<strong>${formatAmount(Number(u.amount), u.currency)}</strong>`
+        }</div>
+      </div>`
+      ),
+  ];
+  el.innerHTML = rows.length ? rows.join("") : `<div class="text-muted" style="padding: 8px 0">В ближайшие 7 дней списаний нет</div>`;
 }
 
 async function loadDashboard() {
@@ -207,6 +250,11 @@ async function loadDashboard() {
       api.get("/stats/top", { ...periodParams, limit: 10 }),
       api.get("/stats/budget"),
       getRates().catch(() => ({ HUF: 1 })),
+    ]);
+    // Subscriptions are an extra block: their failure must not break the dashboard.
+    const [upcoming, subsSummary] = await Promise.all([
+      api.get("/subscriptions/upcoming", { days: 7 }).catch(() => null),
+      api.get("/subscriptions/summary").catch(() => null),
     ]);
 
     stateEl.innerHTML = "";
@@ -234,6 +282,7 @@ async function loadDashboard() {
     renderBudgets(budget, rates, displayCurrency);
     renderCurrencyBreakdown(byCurrency);
     renderTop(top, rates, displayCurrency);
+    renderUpcoming(upcoming, subsSummary, rates, displayCurrency);
   } catch (err) {
     stateEl.innerHTML = `<div class="alert alert-danger">${escapeHtml(err.detail || "Не удалось загрузить дашборд")}</div>`;
   }

@@ -1,3 +1,5 @@
+from ipaddress import IPv4Network, IPv6Network, ip_network
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_SECRET_KEY = "dev-secret-key-change-me"  # noqa: S105  insecure on purpose, rejected in prod
@@ -40,6 +42,14 @@ class Settings(BaseSettings):
     )
     rates_fallback_url: str = "https://open.er-api.com/v6/latest/HUF"
 
+    # Bot API (stage 2a): service token accepted only from the internal Docker network.
+    # The token itself never lives on the tracker's server — only its hex SHA-256.
+    bot_api_token_sha256: str = ""
+    # Existing admin on whose behalf the bot's operations are recorded.
+    bot_api_username: str = ""
+    # CSV of CIDR networks the token is accepted from (the vav-internal subnet); empty = nowhere.
+    bot_api_allowed_networks: str = ""
+
     backup_dir: str = "/data/backups"
     backup_keep: int = 14
     pre_migrate_backup_keep: int = 10
@@ -47,6 +57,15 @@ class Settings(BaseSettings):
     @property
     def is_local(self) -> bool:
         return self.domain == "localhost"
+
+    @property
+    def bot_networks(self) -> list[IPv4Network | IPv6Network]:
+        """Parsed ``BOT_API_ALLOWED_NETWORKS``; raises ``ValueError`` on a malformed entry."""
+        return [
+            ip_network(item.strip(), strict=False)
+            for item in self.bot_api_allowed_networks.split(",")
+            if item.strip()
+        ]
 
 
 settings = Settings()

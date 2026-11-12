@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, newIdempotencyKey } from "./api.js";
 import {
   requireAuth,
   renderHeader,
@@ -14,6 +14,7 @@ import {
   isoToBudapestInput,
   budapestNowForInput,
   initCategoryFilter,
+  sourceBadge,
 } from "./common.js";
 
 const state = {
@@ -26,6 +27,8 @@ const state = {
 };
 
 let editingId = null;
+// One key per opened "add" form: a double click or a retry after a timeout cannot duplicate.
+let createKey = null;
 
 function renderExpenseRow(e, rates, displayCurrency, isAdmin) {
   const original = formatAmount(Number(e.amount), e.currency);
@@ -46,7 +49,7 @@ function renderExpenseRow(e, rates, displayCurrency, isAdmin) {
     <tr>
       <td data-label="Дата">${formatDateTime(e.occurred_at)}</td>
       <td data-label="Категория">${catChip}</td>
-      <td data-label="Комментарий" class="comment-cell">${escapeHtml(e.comment || "")}</td>
+      <td data-label="Комментарий" class="comment-cell">${sourceBadge(e.source)}${escapeHtml(e.comment || "")}</td>
       <td data-label="Сумма" class="amount-cell">${original}${secondary}</td>
       <td data-label="" class="row-actions-cell">${actions}</td>
     </tr>`;
@@ -124,6 +127,7 @@ function populateCategorySelect(selectEl, selectedId) {
 
 function openExpenseModal(expense) {
   editingId = expense ? expense.id : null;
+  createKey = expense ? null : newIdempotencyKey();
   document.getElementById("expense-modal-title").textContent = expense ? "Редактировать трату" : "Добавить трату";
   document.getElementById("expense-form-error").innerHTML = "";
   populateCategorySelect(document.getElementById("expense-category"), expense ? expense.category.id : state.categories[0]?.id);
@@ -246,7 +250,7 @@ function wireStaticEvents() {
         await api.patch(`/expenses/${editingId}`, payload);
         showToast("Операция обновлена", "success");
       } else {
-        await api.post("/expenses", payload);
+        await api.post("/expenses", payload, { "Idempotency-Key": createKey });
         showToast("Операция добавлена", "success");
       }
       closeExpenseModal();

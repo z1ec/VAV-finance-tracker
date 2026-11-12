@@ -111,6 +111,29 @@ export function formatDate(isoString) {
   }).format(dt);
 }
 
+/** "YYYY-MM-DD" (a local calendar date, no time zone) → "DD.MM.YYYY". */
+export function formatLocalDate(dateStr) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+/** Human label of a subscription period: "Ежемесячно", "Каждые 2 нед." … */
+export function periodLabel(period, interval) {
+  const n = Number(interval) || 1;
+  if (period === "weekly") return n === 1 ? "Еженедельно" : `Каждые ${n} нед.`;
+  if (period === "yearly") return n === 1 ? "Ежегодно" : `Каждые ${n} г.`;
+  return n === 1 ? "Ежемесячно" : `Каждые ${n} мес.`;
+}
+
+/** "через 3 дн." / "сегодня" / "просрочено на 2 дн." */
+export function daysLeftLabel(days) {
+  if (days === 0) return "сегодня";
+  if (days === 1) return "завтра";
+  if (days < 0) return `просрочено на ${-days} дн.`;
+  return `через ${days} дн.`;
+}
+
 /* ---------- Europe/Budapest <-> datetime-local conversions ---------- */
 
 function getBudapestOffsetMinutes(date) {
@@ -140,7 +163,11 @@ export function budapestInputToIso(value) {
   const [y, m, d] = datePart.split("-").map(Number);
   const [hh, mm] = timePart.split(":").map(Number);
   const guessUtc = Date.UTC(y, m - 1, d, hh, mm);
-  const offsetMinutes = getBudapestOffsetMinutes(new Date(guessUtc));
+  // The offset must be the one in effect at the resulting instant, not at the guess: near a
+  // DST switch they differ (e.g. 25 Oct 01:30 is still CEST). A second pass settles it.
+  let offsetMinutes = getBudapestOffsetMinutes(new Date(guessUtc));
+  const corrected = getBudapestOffsetMinutes(new Date(guessUtc - offsetMinutes * 60000));
+  if (corrected !== offsetMinutes) offsetMinutes = corrected;
   return new Date(guessUtc - offsetMinutes * 60000).toISOString();
 }
 
@@ -182,6 +209,18 @@ export async function requireAuth() {
   }
 }
 
+const SOURCE_BADGES = {
+  telegram: { icon: "🤖", title: "Добавлено через Telegram-бота" },
+  subscription: { icon: "🔁", title: "Списание по подписке" },
+};
+
+/** Small icon next to an expense that did not come from the site form. */
+export function sourceBadge(source) {
+  const badge = SOURCE_BADGES[source];
+  if (!badge) return "";
+  return `<span class="source-icon" title="${badge.title}" aria-label="${badge.title}">${badge.icon}</span>`;
+}
+
 export function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str ?? "";
@@ -194,6 +233,7 @@ export function renderHeader(user, activePage) {
   const pages = [
     { href: "/index.html", key: "expenses", label: "Операции", icon: "📋" },
     { href: "/dashboard.html", key: "dashboard", label: "Дашборд", icon: "📊" },
+    { href: "/subscriptions.html", key: "subscriptions", label: "Подписки", icon: "🔁" },
   ];
   if (user.role === "admin") {
     pages.push({ href: "/settings.html", key: "settings", label: "Настройки", icon: "⚙️" });

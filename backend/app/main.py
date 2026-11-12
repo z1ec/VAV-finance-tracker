@@ -2,19 +2,21 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
+from app import API_VERSION
 from app.config import settings
 from app.currency import RateUnavailableError, ensure_today_rates
 from app.db import SessionLocal
+from app.deps import token_guard
 from app.logging_config import configure_logging
 from app.migrate import run_migrations
 from app.models import ExchangeRate
-from app.routers import auth, budgets, categories, expenses, rates, stats
-from app.scheduler import shutdown_scheduler, start_scheduler
+from app.routers import auth, budgets, categories, expenses, rates, stats, subscriptions
+from app.scheduler import shutdown_scheduler, start_scheduler, subscriptions_job
 from app.security import check_secrets
 from app.seed import run_seed
 
@@ -39,12 +41,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning("startup_rates_unavailable", extra={"error": str(exc)})
     finally:
         db.close()
+    # Catch up on subscription charges missed while the app was down (idempotent).
+    subscriptions_job()
     start_scheduler()
     yield
     shutdown_scheduler()
 
 
-app = FastAPI(title="Expense Tracker", lifespan=lifespan)
+app = FastAPI(
+    title="Expense Tracker",
+    version=API_VERSION,
+    description=(
+        "Multi-currency expense tracker (HUF/EUR/RUB, base HUF). Browser clients use the "
+        "session cookie; the Momentum bot uses a service token from the internal Docker "
+        "network only — see docs/API_BOT.md. Bare `YYYY-MM-DD` dates are local days in "
+        "Europe/Budapest."
+    ),
+    lifespan=lifespan,
+    # Bot token allowlist: any route not in deps.TOKEN_ALLOWED_ROUTES answers 403 to a token.
+    dependencies=[Depends(token_guard)],
+)
 
 
 @app.exception_handler(RateUnavailableError)
@@ -76,9 +92,10 @@ app.include_router(categories.router, prefix="/api/categories", tags=["categorie
 app.include_router(rates.router, prefix="/api/rates", tags=["rates"])
 app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
 app.include_router(budgets.router, prefix="/api/budgets", tags=["budgets"])
+app.include_router(subscriptions.router, prefix="/api/subscriptions", tags=["subscriptions"])
 
 
-@app.get("/api/health")
+@app.get("/api/health", tags=["health"])
 def health():
     db = SessionLocal()
     try:

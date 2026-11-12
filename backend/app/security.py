@@ -5,6 +5,7 @@ it only warns. Messages name the offending settings but never include their valu
 """
 
 import logging
+import re
 
 from app.config import (
     DEFAULT_PASSWORDS,
@@ -15,6 +16,8 @@ from app.config import (
 )
 
 logger = logging.getLogger("app.security")
+
+_SHA256_HEX = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 class InsecureConfigError(RuntimeError):
@@ -41,6 +44,26 @@ def find_insecure_settings(cfg: Settings) -> list[str]:
             problems.append(
                 f"{prefix}_PASSWORD is a default value or shorter than {MIN_PASSWORD_LENGTH} chars"
             )
+    problems.extend(find_bot_api_problems(cfg))
+    return problems
+
+
+def find_bot_api_problems(cfg: Settings) -> list[str]:
+    """Validate the bot token settings (names only). An unset hash simply disables the token."""
+    problems: list[str] = []
+    try:
+        networks = cfg.bot_networks
+    except ValueError:
+        problems.append("BOT_API_ALLOWED_NETWORKS contains an entry that is not a CIDR network")
+        networks = []
+    if any(not net.is_private for net in networks):
+        problems.append("BOT_API_ALLOWED_NETWORKS must list private (internal) networks only")
+    if not cfg.bot_api_token_sha256:
+        return problems
+    if not _SHA256_HEX.match(cfg.bot_api_token_sha256.strip()):
+        problems.append("BOT_API_TOKEN_SHA256 must be a 64-char hex SHA-256 digest")
+    if not cfg.bot_api_username:
+        problems.append("BOT_API_USERNAME is required when BOT_API_TOKEN_SHA256 is set")
     return problems
 
 

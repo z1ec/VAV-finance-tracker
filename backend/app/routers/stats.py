@@ -1,13 +1,14 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
+from app import timeutil
 from app.db import get_db
-from app.deps import get_current_user
-from app.filters import filtered_expenses_query
+from app.deps import Actor, get_current_user, get_reader
+from app.filters import date_bounds, filtered_expenses_query
 from app.models import Budget, Category, Expense, Setting, User
 from app.schemas import (
     BudgetsOverallStatusOut,
@@ -41,41 +42,34 @@ def stats_filters(
     )
 
 
-def _parse_dt(value: str | None, end_of_day: bool = False) -> datetime | None:
-    if not value:
-        return None
-    if len(value) == 10:
-        value = value + ("T23:59:59.999999" if end_of_day else "T00:00:00")
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
-
-
 def _period_bounds(date_from: str | None, date_to: str | None) -> tuple[datetime, datetime]:
-    now = datetime.now(UTC)
-    start = _parse_dt(date_from) or now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    end = _parse_dt(date_to, end_of_day=True) or now
-    return start, end
+    """Default period: from the start of the current local month until now."""
+    now = timeutil.now_utc()
+    start, end = date_bounds(date_from, date_to)
+    if start is None:
+        start = timeutil.local_midnight_utc(timeutil.local_today(now).replace(day=1))
+    return start, end or now
+
+
+def _local_date(value: datetime) -> date:
+    return value.astimezone(timeutil.local_tz()).date()
 
 
 @router.get("/summary", response_model=SummaryOut)
 def summary(
     filters: StatsFilters = Depends(stats_filters),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    actor: Actor = Depends(get_reader),
 ):
     start, end = _period_bounds(filters.date_from, filters.date_to)
 
-    query = filtered_expenses_query(
-        start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
-    )
+    query = filtered_expenses_query(start, end, filters.category_id, filters.currency, None)
     subq = query.subquery()
     total_huf, count = db.execute(
         select(func.coalesce(func.sum(subq.c.amount_huf), 0), func.count()).select_from(subq)
     ).one()
 
-    days = max((end.date() - start.date()).days + 1, 1)
+    days = max((_local_date(end) - _local_date(start)).days + 1, 1)
     avg_per_day = float(total_huf) / days
     avg_per_expense = float(total_huf) / count if count else 0.0
 
@@ -84,7 +78,7 @@ def summary(
     prev_start = prev_end - period_length
 
     prev_query = filtered_expenses_query(
-        prev_start.isoformat(), prev_end.isoformat(), filters.category_id, filters.currency, None
+        prev_start, prev_end, filters.category_id, filters.currency, None
     )
     prev_subq = prev_query.subquery()
     prev_total = db.execute(
@@ -114,9 +108,7 @@ def by_category(
     user: User = Depends(get_current_user),
 ):
     start, end = _period_bounds(filters.date_from, filters.date_to)
-    query = filtered_expenses_query(
-        start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
-    )
+    query = filtered_expenses_query(start, end, filters.category_id, filters.currency, None)
     subq = query.subquery()
 
     rows = db.execute(
@@ -146,23 +138,22 @@ def by_month(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    now = datetime.now(UTC)
-    first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    months = []
-    cursor = first_of_month
+    # Twelve local calendar months ending with the current one.
+    cursor = timeutil.local_today().replace(day=1)
+    months: list[date] = []
     for _ in range(12):
         months.append(cursor)
         cursor = (cursor - timedelta(days=1)).replace(day=1)
     months.reverse()
 
-    range_start = months[0]
-    query = filtered_expenses_query(range_start.isoformat(), None, category_id, currency, None)
+    range_start = timeutil.local_midnight_utc(months[0])
+    query = filtered_expenses_query(range_start, None, category_id, currency, None)
     subq = query.subquery()
     rows = db.execute(select(subq.c.occurred_at, subq.c.amount_huf)).all()
 
     totals = {m.strftime("%Y-%m"): 0 for m in months}
     for occurred_at, amount_huf in rows:
-        key = datetime.fromisoformat(occurred_at).strftime("%Y-%m")
+        key = timeutil.to_local_date(occurred_at).strftime("%Y-%m")
         if key in totals:
             totals[key] += amount_huf
 
@@ -176,9 +167,7 @@ def by_currency(
     user: User = Depends(get_current_user),
 ):
     start, end = _period_bounds(filters.date_from, filters.date_to)
-    query = filtered_expenses_query(
-        start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
-    )
+    query = filtered_expenses_query(start, end, filters.category_id, filters.currency, None)
     subq = query.subquery()
 
     rows = db.execute(
@@ -204,9 +193,7 @@ def top_expenses(
 ):
     start, end = _period_bounds(filters.date_from, filters.date_to)
     query = (
-        filtered_expenses_query(
-            start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
-        )
+        filtered_expenses_query(start, end, filters.category_id, filters.currency, None)
         .options(joinedload(Expense.category))
         .order_by(Expense.amount_huf.desc())
         .limit(limit)
@@ -215,11 +202,12 @@ def top_expenses(
 
 
 @router.get("/budget", response_model=BudgetsOverallStatusOut)
-def budget_status(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    now = datetime.now(UTC)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+def budget_status(db: Session = Depends(get_db), actor: Actor = Depends(get_reader)):
+    """Budget usage for the current local month (Europe/Budapest) up to now."""
+    now = timeutil.now_utc()
+    month_start = timeutil.local_midnight_utc(timeutil.local_today(now).replace(day=1))
 
-    query = filtered_expenses_query(month_start.isoformat(), now.isoformat(), None, None, None)
+    query = filtered_expenses_query(month_start, now, None, None, None)
     subq = query.subquery()
     spent_by_category: dict[int, int] = {
         category_id: spent
