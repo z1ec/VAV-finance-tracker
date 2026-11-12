@@ -1,39 +1,31 @@
+# Local development: builds both images from source.
+#   cp .env.example .env && docker compose up -d --build && open http://localhost:8080
+# Production uses prebuilt GHCR images: deploy/docker-compose.prod.yml (see docs/DEPLOYMENT.md).
 services:
   backend:
-    build: ./backend
-    restart: unless-stopped
+    build:
+      context: ./backend
+      args:
+        APP_VERSION: dev
+        GIT_SHA: local
+    env_file: .env
     environment:
-      SECRET_KEY: ${SECRET_KEY}
-      ADMIN_USERNAME: ${ADMIN_USERNAME}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      USER1_USERNAME: ${USER1_USERNAME}
-      USER1_PASSWORD: ${USER1_PASSWORD}
-      USER2_USERNAME: ${USER2_USERNAME}
-      USER2_PASSWORD: ${USER2_PASSWORD}
       DB_PATH: /data/expenses.db
-      TZ: ${TZ:-Europe/Budapest}
-      DOMAIN: ${DOMAIN:-localhost}
+      BACKUP_DIR: /data/backups
     volumes:
+      # The container runs as uid 10001: on Linux run `sudo chown -R 10001:10001 data` once.
       - ./data:/data
-    expose:
-      - "8000"
-
-  caddy:
-    image: caddy:2-alpine
     restart: unless-stopped
-    depends_on:
-      - backend
-    environment:
-      DOMAIN: ${DOMAIN:-localhost}
-    ports:
-      - "80:80"
-      - "8443:8443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./frontend:/srv:ro
-      - caddy_data:/data
-      - caddy_config:/config
 
-volumes:
-  caddy_data:
-  caddy_config:
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    environment:
+      DOMAIN: localhost
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped

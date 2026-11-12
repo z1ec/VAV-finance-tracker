@@ -1,0 +1,5 @@
+# Only the static frontend and the Caddyfile are needed for the web image.
+*
+!frontend/
+!web/Caddyfile
+**/.DS_Store
