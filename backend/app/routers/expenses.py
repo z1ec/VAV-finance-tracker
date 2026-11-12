@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
@@ -23,7 +23,7 @@ router = APIRouter()
 
 @router.get("/trash", response_model=list[ExpenseOut])
 def trash(db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     query = (
         select(Expense)
         .options(joinedload(Expense.category))
@@ -52,10 +52,32 @@ def export_csv(
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["id", "occurred_at", "category", "amount", "currency", "rate_to_huf", "amount_huf", "rate_source", "comment"])
+    writer.writerow(
+        [
+            "id",
+            "occurred_at",
+            "category",
+            "amount",
+            "currency",
+            "rate_to_huf",
+            "amount_huf",
+            "rate_source",
+            "comment",
+        ]
+    )
     for e in items:
         writer.writerow(
-            [e.id, e.occurred_at, e.category.name, e.amount, e.currency, e.rate_to_huf, e.amount_huf, e.rate_source, e.comment or ""]
+            [
+                e.id,
+                e.occurred_at,
+                e.category.name,
+                e.amount,
+                e.currency,
+                e.rate_to_huf,
+                e.amount_huf,
+                e.rate_source,
+                e.comment or "",
+            ]
         )
 
     csv_content = "﻿" + buffer.getvalue()
@@ -85,7 +107,9 @@ def list_expenses(
     sort_column = Expense.amount_huf if sort_field == "amount_huf" else Expense.occurred_at
     order = sort_column.desc() if sort.startswith("-") else sort_column.asc()
 
-    items_query = base_query.options(joinedload(Expense.category)).order_by(order, Expense.id.desc())
+    items_query = base_query.options(joinedload(Expense.category)).order_by(
+        order, Expense.id.desc()
+    )
     items_query = items_query.offset((page - 1) * per_page).limit(per_page)
     items = db.execute(items_query).scalars().unique().all()
 
@@ -94,18 +118,22 @@ def list_expenses(
         select(func.count(), func.coalesce(func.sum(subq.c.amount_huf), 0)).select_from(subq)
     ).one()
 
-    return ExpenseListOut(items=items, total=total, page=page, per_page=per_page, sum_huf=int(sum_huf))
+    return ExpenseListOut(
+        items=items, total=total, page=page, per_page=per_page, sum_huf=int(sum_huf)
+    )
 
 
 @router.post("", response_model=ExpenseOut, status_code=201)
-def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+def create_expense(
+    payload: ExpenseCreate, db: Session = Depends(get_db), user: User = Depends(require_admin)
+):
     category = db.get(Category, payload.category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Категория не найдена")
 
-    occurred_at = payload.occurred_at or datetime.now(timezone.utc)
+    occurred_at = payload.occurred_at or datetime.now(UTC)
     if occurred_at.tzinfo is None:
-        occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+        occurred_at = occurred_at.replace(tzinfo=UTC)
 
     amount = to_decimal(payload.amount)
     manual_rate = to_decimal(payload.rate_to_huf) if payload.rate_to_huf is not None else None
@@ -133,7 +161,12 @@ def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), user: 
 
 
 @router.patch("/{expense_id}", response_model=ExpenseOut)
-def update_expense(expense_id: int, payload: ExpenseUpdate, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+def update_expense(
+    expense_id: int,
+    payload: ExpenseUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
     expense = db.get(Expense, expense_id)
     if not expense or expense.deleted_at:
         raise HTTPException(status_code=404, detail="Операция не найдена")
@@ -152,7 +185,7 @@ def update_expense(expense_id: int, payload: ExpenseUpdate, db: Session = Depend
     if "occurred_at" in data and data["occurred_at"] is not None:
         occurred_at = data["occurred_at"]
         if occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+            occurred_at = occurred_at.replace(tzinfo=UTC)
         expense.occurred_at = occurred_at.isoformat()
     occurred_at_dt = datetime.fromisoformat(expense.occurred_at)
 
@@ -177,7 +210,7 @@ def update_expense(expense_id: int, payload: ExpenseUpdate, db: Session = Depend
     expense.rate_to_huf = rate
     expense.rate_source = source
     expense.amount_huf = convert_to_huf(new_amount, rate)
-    expense.updated_at = datetime.now(timezone.utc).isoformat()
+    expense.updated_at = datetime.now(UTC).isoformat()
 
     db.commit()
     db.refresh(expense)
@@ -185,17 +218,21 @@ def update_expense(expense_id: int, payload: ExpenseUpdate, db: Session = Depend
 
 
 @router.delete("/{expense_id}", status_code=204)
-def delete_expense(expense_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def delete_expense(
+    expense_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
+):
     expense = db.get(Expense, expense_id)
     if not expense or expense.deleted_at:
         raise HTTPException(status_code=404, detail="Операция не найдена")
-    expense.deleted_at = datetime.now(timezone.utc).isoformat()
+    expense.deleted_at = datetime.now(UTC).isoformat()
     db.commit()
     return Response(status_code=204)
 
 
 @router.post("/{expense_id}/restore", response_model=ExpenseOut)
-def restore_expense(expense_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def restore_expense(
+    expense_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
+):
     expense = db.get(Expense, expense_id)
     if not expense or not expense.deleted_at:
         raise HTTPException(status_code=404, detail="Операция не найдена в корзине")

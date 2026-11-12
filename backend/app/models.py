@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     CheckConstraint,
@@ -15,7 +16,7 @@ from app.db import Base
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class User(Base):
@@ -49,9 +50,9 @@ class Expense(Base):
     __tablename__ = "expenses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    amount: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     currency: Mapped[str] = mapped_column(String, nullable=False)
-    rate_to_huf: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    rate_to_huf: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     amount_huf: Mapped[int] = mapped_column(Integer, nullable=False)
     rate_source: Mapped[str] = mapped_column(String, nullable=False)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
@@ -80,20 +81,18 @@ class ExchangeRate(Base):
 
     date: Mapped[str] = mapped_column(String, primary_key=True)
     currency: Mapped[str] = mapped_column(String, primary_key=True)
-    rate_to_huf: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    rate_to_huf: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     source: Mapped[str] = mapped_column(String, nullable=False)
     fetched_at: Mapped[str] = mapped_column(String, nullable=False, default=utcnow_iso)
 
-    __table_args__ = (
-        CheckConstraint("source IN ('api','manual')", name="ck_rates_source"),
-    )
+    __table_args__ = (CheckConstraint("source IN ('api','manual')", name="ck_rates_source"),)
 
 
 class Budget(Base):
     __tablename__ = "budgets"
 
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), primary_key=True)
-    limit_huf: Mapped[float] = mapped_column(Numeric(18, 2), nullable=False)
+    limit_huf: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
 
     category: Mapped["Category"] = relationship(back_populates="budget")
 

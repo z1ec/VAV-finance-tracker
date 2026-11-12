@@ -1,4 +1,6 @@
-from datetime import date as Date, datetime, timezone
+import logging
+from datetime import UTC, datetime
+from datetime import date as Date
 from decimal import ROUND_HALF_UP, Decimal
 
 import httpx
@@ -7,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import ExchangeRate
+
+logger = logging.getLogger("app.currency")
 
 CURRENCIES = ("HUF", "EUR", "RUB")
 DECIMALS = {"HUF": 0, "EUR": 2, "RUB": 2}
@@ -17,7 +21,7 @@ class RateUnavailableError(Exception):
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def to_decimal(value) -> Decimal:
@@ -47,6 +51,7 @@ def convert_from_huf(amount_huf: Decimal, rate_to_huf: Decimal, target_currency:
 
 
 # ---------- Fetching from external APIs ----------
+
 
 def _fetch_primary(date_str: str) -> dict[str, Decimal]:
     url = settings.rates_primary_url.format(date=date_str)
@@ -82,16 +87,17 @@ def fetch_rates(date_str: str = "latest") -> dict[str, Decimal]:
     """Fetch {currency: rate_to_huf} from the primary API, falling back to the secondary one."""
     try:
         return _fetch_primary(date_str)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("rates_primary_failed", extra={"error": repr(exc)})
     try:
         return _fetch_fallback()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("rates_fallback_failed", extra={"error": repr(exc)})
     raise RateUnavailableError(f"Не удалось получить курсы валют (дата: {date_str})")
 
 
 # ---------- Persistence ----------
+
 
 def upsert_rate(
     db: Session,
@@ -127,7 +133,7 @@ def upsert_rate(
 def refresh_rates_for_date(db: Session, date_str: str, force: bool = False) -> dict[str, Decimal]:
     """Fetch current rates and store EUR/RUB for `date_str`. Returns fetched rates."""
     rates = fetch_rates(date_str if date_str != "latest" else "latest")
-    target_date = date_str if date_str != "latest" else datetime.now(timezone.utc).date().isoformat()
+    target_date = date_str if date_str != "latest" else datetime.now(UTC).date().isoformat()
     for cur in ("EUR", "RUB"):
         if cur in rates:
             upsert_rate(db, target_date, cur, rates[cur], "api", force=force)
@@ -136,13 +142,14 @@ def refresh_rates_for_date(db: Session, date_str: str, force: bool = False) -> d
 
 
 def ensure_today_rates(db: Session) -> bool:
-    """Called on startup: if today has no EUR/RUB rate rows yet, fetch them. Returns True if fetched."""
-    today = datetime.now(timezone.utc).date().isoformat()
+    """Called on startup: fetch today's rates if EUR/RUB rows are missing.
+
+    Returns True if a fetch happened.
+    """
+    today = datetime.now(UTC).date().isoformat()
     existing_currencies = {
         row.currency
-        for row in db.execute(
-            select(ExchangeRate).where(ExchangeRate.date == today)
-        ).scalars()
+        for row in db.execute(select(ExchangeRate).where(ExchangeRate.date == today)).scalars()
     }
     if {"EUR", "RUB"}.issubset(existing_currencies):
         return False
@@ -151,6 +158,7 @@ def ensure_today_rates(db: Session) -> bool:
 
 
 # ---------- Rate lookup for a specific expense ----------
+
 
 def get_rate_for_date(db: Session, currency: str, target_date: Date) -> tuple[Decimal, str, str]:
     """Resolve (rate_to_huf, source, date_used) for `currency` on `target_date`
@@ -188,9 +196,7 @@ def get_rate_for_date(db: Session, currency: str, target_date: Date) -> tuple[De
         db.commit()
         return rate, "api", date_str
 
-    raise RateUnavailableError(
-        f"Курс {currency} на {date_str} недоступен. Укажите курс вручную."
-    )
+    raise RateUnavailableError(f"Курс {currency} на {date_str} недоступен. Укажите курс вручную.")
 
 
 def resolve_expense_rate(

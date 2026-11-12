@@ -38,7 +38,7 @@ def test_user_gets_403_on_admin_only_endpoints(client):
     assert categories, "starter categories should have been seeded"
     category_id = categories[0]["id"]
 
-    admin_only_calls = [
+    admin_only_calls: list[tuple[str, str, dict[str, object] | None]] = [
         ("post", "/api/categories", {"name": "Новая категория", "color": "#ffffff"}),
         ("patch", f"/api/categories/{category_id}", {"name": "Переименовано"}),
         ("post", f"/api/categories/{category_id}/archive", None),
@@ -56,7 +56,9 @@ def test_user_gets_403_on_admin_only_endpoints(client):
     for method, url, payload in admin_only_calls:
         call = getattr(client, method)
         resp = call(url, json=payload) if payload is not None else call(url)
-        assert resp.status_code == 403, f"{method.upper()} {url} expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"{method.upper()} {url} expected 403, got {resp.status_code}: {resp.text}"
+        )
 
 
 def test_user_can_read(client):

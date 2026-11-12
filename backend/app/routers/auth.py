@@ -19,7 +19,9 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=UserOut)
-def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+def login(
+    payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)
+):
     ip = get_client_ip(request)
     if is_rate_limited(ip):
         raise HTTPException(
@@ -30,7 +32,9 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
     user = db.execute(select(User).where(User.username == payload.username)).scalar_one_or_none()
     if not user or not verify_password(payload.password, user.password_hash):
         record_failed_attempt(ip)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль"
+        )
 
     reset_attempts(ip)
     token = create_session_token(user.id)

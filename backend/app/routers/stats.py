@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -36,7 +36,9 @@ def stats_filters(
     category_id: list[int] | None = Query(default=None),
     currency: str | None = None,
 ) -> StatsFilters:
-    return StatsFilters(date_from=date_from, date_to=date_to, category_id=category_id, currency=currency)
+    return StatsFilters(
+        date_from=date_from, date_to=date_to, category_id=category_id, currency=currency
+    )
 
 
 def _parse_dt(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -46,22 +48,28 @@ def _parse_dt(value: str | None, end_of_day: bool = False) -> datetime | None:
         value = value + ("T23:59:59.999999" if end_of_day else "T00:00:00")
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
 def _period_bounds(date_from: str | None, date_to: str | None) -> tuple[datetime, datetime]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = _parse_dt(date_from) or now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end = _parse_dt(date_to, end_of_day=True) or now
     return start, end
 
 
 @router.get("/summary", response_model=SummaryOut)
-def summary(filters: StatsFilters = Depends(stats_filters), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def summary(
+    filters: StatsFilters = Depends(stats_filters),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     start, end = _period_bounds(filters.date_from, filters.date_to)
 
-    query = filtered_expenses_query(start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None)
+    query = filtered_expenses_query(
+        start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
+    )
     subq = query.subquery()
     total_huf, count = db.execute(
         select(func.coalesce(func.sum(subq.c.amount_huf), 0), func.count()).select_from(subq)
@@ -75,9 +83,13 @@ def summary(filters: StatsFilters = Depends(stats_filters), db: Session = Depend
     prev_end = start - timedelta(microseconds=1)
     prev_start = prev_end - period_length
 
-    prev_query = filtered_expenses_query(prev_start.isoformat(), prev_end.isoformat(), filters.category_id, filters.currency, None)
+    prev_query = filtered_expenses_query(
+        prev_start.isoformat(), prev_end.isoformat(), filters.category_id, filters.currency, None
+    )
     prev_subq = prev_query.subquery()
-    prev_total = db.execute(select(func.coalesce(func.sum(prev_subq.c.amount_huf), 0)).select_from(prev_subq)).scalar_one()
+    prev_total = db.execute(
+        select(func.coalesce(func.sum(prev_subq.c.amount_huf), 0)).select_from(prev_subq)
+    ).scalar_one()
 
     change_pct = None
     if prev_total:
@@ -96,9 +108,15 @@ def summary(filters: StatsFilters = Depends(stats_filters), db: Session = Depend
 
 
 @router.get("/by-category", response_model=list[ByCategoryOut])
-def by_category(filters: StatsFilters = Depends(stats_filters), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def by_category(
+    filters: StatsFilters = Depends(stats_filters),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     start, end = _period_bounds(filters.date_from, filters.date_to)
-    query = filtered_expenses_query(start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None)
+    query = filtered_expenses_query(
+        start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
+    )
     subq = query.subquery()
 
     rows = db.execute(
@@ -111,7 +129,12 @@ def by_category(filters: StatsFilters = Depends(stats_filters), db: Session = De
     total = sum(row[1] for row in rows) or 1
 
     return [
-        ByCategoryOut(category=cat, total_huf=int(total_huf), count=count, pct=round(total_huf / total * 100, 2))
+        ByCategoryOut(
+            category=cat,
+            total_huf=int(total_huf),
+            count=count,
+            pct=round(total_huf / total * 100, 2),
+        )
         for cat, total_huf, count in rows
     ]
 
@@ -123,7 +146,7 @@ def by_month(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     months = []
     cursor = first_of_month
@@ -147,18 +170,27 @@ def by_month(
 
 
 @router.get("/by-currency", response_model=list[ByCurrencyOut])
-def by_currency(filters: StatsFilters = Depends(stats_filters), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def by_currency(
+    filters: StatsFilters = Depends(stats_filters),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     start, end = _period_bounds(filters.date_from, filters.date_to)
-    query = filtered_expenses_query(start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None)
+    query = filtered_expenses_query(
+        start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
+    )
     subq = query.subquery()
 
     rows = db.execute(
-        select(subq.c.currency, func.sum(subq.c.amount), func.sum(subq.c.amount_huf), func.count())
-        .group_by(subq.c.currency)
+        select(
+            subq.c.currency, func.sum(subq.c.amount), func.sum(subq.c.amount_huf), func.count()
+        ).group_by(subq.c.currency)
     ).all()
 
     return [
-        ByCurrencyOut(currency=cur, total_original=float(total_orig), total_huf=int(total_huf), count=count)
+        ByCurrencyOut(
+            currency=cur, total_original=float(total_orig), total_huf=int(total_huf), count=count
+        )
         for cur, total_orig, total_huf, count in rows
     ]
 
@@ -172,7 +204,9 @@ def top_expenses(
 ):
     start, end = _period_bounds(filters.date_from, filters.date_to)
     query = (
-        filtered_expenses_query(start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None)
+        filtered_expenses_query(
+            start.isoformat(), end.isoformat(), filters.category_id, filters.currency, None
+        )
         .options(joinedload(Expense.category))
         .order_by(Expense.amount_huf.desc())
         .limit(limit)
@@ -182,14 +216,17 @@ def top_expenses(
 
 @router.get("/budget", response_model=BudgetsOverallStatusOut)
 def budget_status(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     query = filtered_expenses_query(month_start.isoformat(), now.isoformat(), None, None, None)
     subq = query.subquery()
-    spent_by_category = dict(
-        db.execute(select(subq.c.category_id, func.sum(subq.c.amount_huf)).group_by(subq.c.category_id)).all()
-    )
+    spent_by_category: dict[int, int] = {
+        category_id: spent
+        for category_id, spent in db.execute(
+            select(subq.c.category_id, func.sum(subq.c.amount_huf)).group_by(subq.c.category_id)
+        ).all()
+    }
     total_spent = sum(spent_by_category.values())
 
     budgets = db.execute(select(Budget).options(joinedload(Budget.category))).scalars().all()
@@ -198,11 +235,17 @@ def budget_status(db: Session = Depends(get_db), user: User = Depends(get_curren
         spent = spent_by_category.get(b.category_id, 0)
         pct = round(spent / float(b.limit_huf) * 100, 2) if b.limit_huf else 0.0
         categories_status.append(
-            BudgetStatusOut(category=b.category, limit_huf=float(b.limit_huf), spent_huf=int(spent), pct=pct)
+            BudgetStatusOut(
+                category=b.category, limit_huf=float(b.limit_huf), spent_huf=int(spent), pct=pct
+            )
         )
 
     total_budget_setting = db.get(Setting, "total_monthly_budget_huf")
-    total_budget = float(total_budget_setting.value) if total_budget_setting and total_budget_setting.value else None
+    total_budget = (
+        float(total_budget_setting.value)
+        if total_budget_setting and total_budget_setting.value
+        else None
+    )
     overall_pct = round(total_spent / total_budget * 100, 2) if total_budget else None
 
     return BudgetsOverallStatusOut(

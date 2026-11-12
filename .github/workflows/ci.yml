@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # github.workflow differs when called from deploy.yml, so the two runs never cancel each other.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: lint · typecheck · tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install Python 3.12 and dependencies
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Ruff (lint)
+        run: ruff check .
+
+      - name: Ruff (format)
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy
+
+      - name: Pytest with coverage (includes deploy.sh dry-run tests)
+        run: pytest --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-xml
+          path: backend/coverage.xml
+          retention-days: 7
+
+  config-lint:
+    name: actionlint · shellcheck · deploy.sh dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: actionlint
+        run: uvx --from actionlint-py actionlint -color
+
+      - name: shellcheck
+        run: uvx --from shellcheck-py shellcheck deploy/*.sh
+
+      - name: deploy.sh dry-run tests
+        working-directory: backend
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
+          .venv/bin/pytest tests/test_deploy_script.py --no-cov -v
+
+  docker-build:
+    name: docker build + smoke test (no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          push: false
+          load: true
+          tags: finance-tracker-backend:ci
+          build-args: |
+            APP_VERSION=ci
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build web image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: web/Dockerfile
+          push: false
+          load: true
+          tags: finance-tracker-web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      - name: Smoke test backend (test .env, DOMAIN=localhost)
+        run: |
+          {
+            echo "SECRET_KEY=$(openssl rand -hex 32)"
+            echo "ADMIN_USERNAME=admin"
+            echo "ADMIN_PASSWORD=$(openssl rand -hex 16)"
+            echo "USER1_USERNAME=user1"
+            echo "USER1_PASSWORD=$(openssl rand -hex 16)"
+            echo "USER2_USERNAME="
+            echo "USER2_PASSWORD="
+            echo "DOMAIN=localhost"
+            echo "TZ=Europe/Budapest"
+          } > smoke.env
+          docker run -d --name smoke --env-file smoke.env -p 8000:8000 finance-tracker-backend:ci
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o health.json -w '%{http_code}' http://127.0.0.1:8000/api/health || true)"
+            if [ "$code" = "200" ]; then break; fi
+            sleep 2
+          done
+          docker logs smoke | tail -20
+          cat health.json; echo
+          test "$code" = "200"
+          grep -q '"db":"ok"' health.json
+          grep -q '"version":"ci"' health.json
+          test "$(docker exec smoke id -u)" = "10001"
+          for _ in $(seq 1 30); do
+            status="$(docker inspect --format '{{.State.Health.Status}}' smoke)"
+            if [ "$status" = "healthy" ]; then break; fi
+            sleep 2
+          done
+          echo "docker health: $status"
+          test "$status" = "healthy"
+
+      - name: Smoke test backend refuses default secrets on a real domain
+        run: |
+          printf 'DOMAIN=finance.example.com\nSECRET_KEY=canary7Q\nADMIN_PASSWORD=canary9Z\n' > insecure.env
+          if docker run --rm --env-file insecure.env finance-tracker-backend:ci > insecure.log 2>&1
+          then
+            echo "::error::backend started with insecure secrets"; exit 1
+          fi
+          grep -q "Refusing to start with insecure secrets" insecure.log
+          if grep -q "canary" insecure.log; then echo "::error::secret value leaked"; exit 1; fi
+
+      - name: Validate web Caddyfile
+        run: |
+          docker run --rm finance-tracker-web:ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm -e DOMAIN=finance.fomin-vladimir.ru finance-tracker-web:ci \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f smoke >/dev/null 2>&1 || true

@@ -1,0 +1,38 @@
+# Production web entry point (image ghcr.io/z1ec/finance-tracker-web).
+# - https://{$DOMAIN} on 443 (Let's Encrypt), port 80 → automatic redirect to HTTPS + ACME.
+# - https://{$DOMAIN}:8443 → permanent redirect to the same path without the port, so the old
+#   bookmarks from the previous server (HTTPS on 8443) keep working.
+# - http://localhost stays plain HTTP for local development (DOMAIN=localhost).
+
+{
+	servers {
+		# Only TCP ports are published/allowed in the firewall: do not advertise HTTP/3.
+		protocols h1 h2
+	}
+}
+
+(app) {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+{$DOMAIN:localhost} {
+	import app
+}
+
+{$DOMAIN:localhost}:8443 {
+	redir https://{host}{uri} permanent
+}
+
+http://localhost {
+	import app
+}

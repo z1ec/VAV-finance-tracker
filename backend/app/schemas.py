@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -8,6 +8,7 @@ RateSource = Literal["api", "manual"]
 
 
 # ---------- Auth ----------
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -24,10 +25,11 @@ class UserOut(BaseModel):
 
 # ---------- Categories ----------
 
+
 class CategoryBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     color: str = Field(min_length=4, max_length=9, pattern=r"^#[0-9a-fA-F]{3,8}$")
-    icon: Optional[str] = Field(default=None, max_length=16)
+    icon: str | None = Field(default=None, max_length=16)
 
 
 class CategoryCreate(CategoryBase):
@@ -35,10 +37,12 @@ class CategoryCreate(CategoryBase):
 
 
 class CategoryUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    color: Optional[str] = Field(default=None, min_length=4, max_length=9, pattern=r"^#[0-9a-fA-F]{3,8}$")
-    icon: Optional[str] = Field(default=None, max_length=16)
-    sort_order: Optional[int] = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    color: str | None = Field(
+        default=None, min_length=4, max_length=9, pattern=r"^#[0-9a-fA-F]{3,8}$"
+    )
+    icon: str | None = Field(default=None, max_length=16)
+    sort_order: int | None = None
 
 
 class CategoryOut(BaseModel):
@@ -47,7 +51,7 @@ class CategoryOut(BaseModel):
     id: int
     name: str
     color: str
-    icon: Optional[str] = None
+    icon: str | None = None
     is_archived: bool
     sort_order: int
 
@@ -59,12 +63,13 @@ class CategoryOut(BaseModel):
 
 # ---------- Expenses ----------
 
-def _validate_occurred_at(v: Optional[datetime]) -> Optional[datetime]:
+
+def _validate_occurred_at(v: datetime | None) -> datetime | None:
     if v is None:
         return v
     if v.tzinfo is None:
-        v = v.replace(tzinfo=timezone.utc)
-    if v > datetime.now(timezone.utc) + timedelta(days=1):
+        v = v.replace(tzinfo=UTC)
+    if v > datetime.now(UTC) + timedelta(days=1):
         raise ValueError("occurred_at не может быть больше чем на сутки в будущем")
     return v
 
@@ -73,9 +78,9 @@ class ExpenseCreate(BaseModel):
     amount: float = Field(gt=0)
     currency: Currency
     category_id: int
-    occurred_at: Optional[datetime] = None
-    comment: Optional[str] = Field(default=None, max_length=500)
-    rate_to_huf: Optional[float] = Field(default=None, gt=0)
+    occurred_at: datetime | None = None
+    comment: str | None = Field(default=None, max_length=500)
+    rate_to_huf: float | None = Field(default=None, gt=0)
 
     @field_validator("occurred_at")
     @classmethod
@@ -84,12 +89,12 @@ class ExpenseCreate(BaseModel):
 
 
 class ExpenseUpdate(BaseModel):
-    amount: Optional[float] = Field(default=None, gt=0)
-    currency: Optional[Currency] = None
-    category_id: Optional[int] = None
-    occurred_at: Optional[datetime] = None
-    comment: Optional[str] = Field(default=None, max_length=500)
-    rate_to_huf: Optional[float] = Field(default=None, gt=0)
+    amount: float | None = Field(default=None, gt=0)
+    currency: Currency | None = None
+    category_id: int | None = None
+    occurred_at: datetime | None = None
+    comment: str | None = Field(default=None, max_length=500)
+    rate_to_huf: float | None = Field(default=None, gt=0)
 
     @field_validator("occurred_at")
     @classmethod
@@ -107,7 +112,7 @@ class ExpenseOut(BaseModel):
     rate_to_huf: float
     rate_source: str
     category: CategoryOut
-    comment: Optional[str] = None
+    comment: str | None = None
     occurred_at: str
     created_by: int
     created_at: str
@@ -124,6 +129,7 @@ class ExpenseListOut(BaseModel):
 
 # ---------- Rates ----------
 
+
 class RateManualCreate(BaseModel):
     date: str
     currency: Currency
@@ -139,13 +145,14 @@ class RateOut(BaseModel):
 
 # ---------- Stats ----------
 
+
 class SummaryOut(BaseModel):
     total_huf: int
     count: int
     avg_per_day: float
     avg_per_expense: float
     prev_period_total_huf: int
-    change_pct: Optional[float] = None
+    change_pct: float | None = None
 
 
 class ByCategoryOut(BaseModel):
@@ -173,7 +180,7 @@ class TopExpenseOut(BaseModel):
     currency: str
     amount_huf: int
     category: CategoryOut
-    comment: Optional[str] = None
+    comment: str | None = None
     occurred_at: str
 
 
@@ -185,13 +192,14 @@ class BudgetStatusOut(BaseModel):
 
 
 class BudgetsOverallStatusOut(BaseModel):
-    total_monthly_budget_huf: Optional[float] = None
+    total_monthly_budget_huf: float | None = None
     spent_huf: int
-    pct: Optional[float] = None
+    pct: float | None = None
     categories: list[BudgetStatusOut]
 
 
 # ---------- Budgets settings ----------
+
 
 class BudgetCategoryIn(BaseModel):
     category_id: int
@@ -199,7 +207,7 @@ class BudgetCategoryIn(BaseModel):
 
 
 class BudgetsUpdate(BaseModel):
-    total_monthly_budget_huf: Optional[float] = Field(default=None, ge=0)
+    total_monthly_budget_huf: float | None = Field(default=None, ge=0)
     categories: list[BudgetCategoryIn] = Field(default_factory=list)
 
 
@@ -209,11 +217,11 @@ class BudgetCategoryOut(BaseModel):
 
 
 class BudgetsOut(BaseModel):
-    total_monthly_budget_huf: Optional[float] = None
+    total_monthly_budget_huf: float | None = None
     categories: list[BudgetCategoryOut]
 
 
 class HealthOut(BaseModel):
     status: str
     db: str
-    last_rates_update: Optional[str] = None
+    last_rates_update: str | None = None

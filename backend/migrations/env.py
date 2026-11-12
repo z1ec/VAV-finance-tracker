@@ -8,9 +8,13 @@ from app.config import settings
 from app.db import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", f"sqlite:///{settings.db_path}")
+# The app passes an explicit URL (app/migrate.py); the alembic CLI falls back to settings.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{settings.db_path}")
 
-if config.config_file_name is not None:
+# Only the CLI configures logging from alembic.ini; inside the app it would disable the
+# already configured JSON loggers.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
@@ -35,7 +39,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+        context.configure(
+            connection=connection, target_metadata=target_metadata, render_as_batch=True
+        )
         with context.begin_transaction():
             context.run_migrations()
 
