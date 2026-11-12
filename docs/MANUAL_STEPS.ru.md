@@ -1,52 +1,29 @@
 # Ручные шаги владельца — этап 1
 
-Состояние на 2026-11-12: трекер **уже работает в Дубае** (`https://finance.fomin-vladimir.ru`)
-на временном стеке `finance-bootstrap`, данные сверены, простой составил 50 секунд. Трекер на
-`ru-tracker` остановлен, но не удалён. Переключение на CI/CD ждёт вашего решения (шаг 1).
+Состояние на 2026-11-12, 12:30 UTC: трекер работает в Дубае на CI/CD
+(`https://finance.fomin-vladimir.ru`, версия 1.1.0, образы `sha-22e0d1c`). Данные сверены.
+Простой: 50 секунд при переезде и 3 минуты 40 секунд при переключении на CD. Трекер на
+`ru-tracker` остановлен, но не удалён.
 
-## 1. Ключ деплоя для GitHub Actions — нужно ваше решение
-Агенту запретили добавлять новый SSH-ключ в `/home/deploy/.ssh/authorized_keys` на `dubai`,
-потому что это постоянный доступ к серверу. Без ключа CD не может зайти на сервер.
+## 1. CI/CD — сделано, для справки
+- Ключ `finance-tracker-deploy` добавлен в `/home/deploy/.ssh/authorized_keys` на `dubai`
+  (ключ бота `momentum-deploy` не тронут). Локальная копия приватного ключа удалена, он хранится
+  только в секрете `DEPLOY_SSH_KEY`.
+- В окружении `production` заданы секреты `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`,
+  `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. Переменные: `DEPLOY_PLATFORM=linux/amd64`,
+  `DEPLOY_ENABLED=true`.
+- Каждый merge в `main` теперь автоматически выкатывается на сервер. Временно отключить
+  автодеплой: `gh variable set DEPLOY_ENABLED -R z1ec/VAV-finance-tracker --body false`.
+- Отозвать доступ GitHub Actions: удалить строку `finance-tracker-deploy` из
+  `/home/deploy/.ssh/authorized_keys`.
 
-**Вариант А (рекомендую)** — разрешить агенту этот шаг (правило в настройках Claude Code или
-ответ в сессии) и попросить продолжить: он сгенерирует отдельную пару ed25519 во временном
-каталоге, добавит публичную часть пользователю `deploy`, запишет секреты окружения `production`,
-удалит локальный приватный ключ и выполнит переключение (раздел 7 брифа).
-
-**Вариант Б** — сделать вручную на рабочей машине:
-```bash
-d=$(mktemp -d) && ssh-keygen -q -t ed25519 -N "" -C finance-tracker-deploy -f "$d/key"
-ssh dubai 'cat >> /home/deploy/.ssh/authorized_keys' < "$d/key.pub"
-R=z1ec/VAV-finance-tracker
-gh api -X PUT "repos/$R/environments/production" >/dev/null
-gh secret set DEPLOY_HOST --env production -R $R --body 81.85.92.119
-gh secret set DEPLOY_USER --env production -R $R --body deploy
-gh secret set DEPLOY_PORT --env production -R $R --body 22
-gh secret set DEPLOY_SSH_KEY --env production -R $R < "$d/key"
-ssh-keyscan -t ed25519 81.85.92.119 2>/dev/null > "$d/kh"
-ssh-keygen -lf "$d/kh"; ssh-keygen -lF 81.85.92.119      # отпечатки должны совпасть
-gh secret set DEPLOY_KNOWN_HOSTS --env production -R $R < "$d/kh"
-gh variable set DEPLOY_PLATFORM -R $R --body linux/amd64
-rm -rf "$d"
-```
-Затем переключение (простой 1–2 минуты):
-```bash
-ssh dubai 'cd /opt/finance-tracker/bootstrap-src && docker compose -p finance-bootstrap --env-file /opt/finance-tracker/.env down'   # без -v
-ssh dubai 'chown -R 10001:10001 /opt/finance-tracker/data'      # backend теперь работает как uid 10001
-gh variable set DEPLOY_ENABLED -R z1ec/VAV-finance-tracker --body true
-gh pr merge 1 -R z1ec/VAV-finance-tracker --merge   # PR №1 → Deploy
-gh run watch -R z1ec/VAV-finance-tracker
-curl -s https://finance.fomin-vladimir.ru/api/health            # "version":"1.1.0"
-```
-Перед `down` сделайте бэкап (`sqlite` backup API, как в `docs/DEPLOYMENT.md`). Если деплой не
-прошёл: `docker compose -p finance-bootstrap … up -d` в `bootstrap-src` возвращает временный стек.
-После успеха можно удалить `/opt/finance-tracker/bootstrap-src` (бэкапы не трогать).
-
-## 2. Новые пароли пользователей
-Пароли `ADMIN` (10 символов) и `USER1` (11 символов) короче 12, а новая версия на реальном домене
-с такими не стартует. Агент сгенерировал на сервере новые пароли по 24 символа и записал их в
-`/opt/finance-tracker/.env`. Копия лежит в `/root/finance-tracker-new-passwords.txt` (права 600,
-только root). Пароль `USER2` и `SECRET_KEY` не менялись.
+## 2. Новые пароли пользователей — заберите их
+Пароли `ADMIN` (10 символов) и `USER1` (11 символов) были короче 12, а новая версия на реальном
+домене с такими не стартует. На сервере сгенерированы новые пароли по 24 символа и записаны
+в `/opt/finance-tracker/.env`. В базе они **уже действуют**: применены командой
+`python -m app.manage set-password --from-env ADMIN USER1`, вход проверен. Старые пароли больше
+не работают. Пароль `USER2` и `SECRET_KEY` не менялись, сессии остались действительными.
+Копия новых паролей лежит в `/root/finance-tracker-new-passwords.txt` (права 600, только root).
 
 **Как меняются пароли.** Пароли из `.env` используются только при **первом** создании
 пользователя (seed). Если поменять их в `.env`, у существующих пользователей ничего не
@@ -62,11 +39,11 @@ printf "%s" "$NEWPW" | docker exec -i finance-tracker-backend-1 \
 Команда отклоняет пароли короче 12 символов и стандартные значения. Она меняет всё или ничего
 и не печатает пароли.
 
-Затем заберите пароли (`ssh dubai cat /root/finance-tracker-new-passwords.txt`), сохраните в
+**Что сделать:** заберите пароли (`ssh dubai cat /root/finance-tracker-new-passwords.txt`), сохраните в
 менеджер паролей, передайте пользователю `USER1` и **удалите файл**:
 `ssh dubai shred -u /root/finance-tracker-new-passwords.txt`.
-Бэкапы до ротации: `/opt/finance-tracker/backups/env-before-rotation-20261112T113256Z` (старый
-`.env`, 600) и `pre-password-rotation-20261112T113256Z.db`.
+Бэкапы до смены паролей: `/opt/finance-tracker/backups/env-before-rotation-20261112T113256Z`
+(старый `.env`, 600) и `pre-set-password-20261112.db`.
 
 ## 3. DNS: устаревший кэш
 Авторитетные NS reg.ru и публичные резолверы уже отдают `81.85.92.119`, AAAA-записи нет. Но
@@ -96,9 +73,9 @@ curl -sI https://fomin-vladimir.ru | head -1
 ```
 
 ## 5. Как откатиться
-- **Релиз (после включения CD):** GitHub → Actions → Deploy → Run workflow → `image_tag` =
-  предыдущий тег (`ssh dubai cat /opt/finance-tracker/.previous_successful_tag`). Неудачный деплой
-  `deploy.sh` откатывает сам.
+- **Релиз:** GitHub → Actions → Deploy → Run workflow → `image_tag` =
+  предыдущий тег (`ssh dubai cat /opt/finance-tracker/.previous_successful_tag`; файл появится
+  после второго деплоя). Неудачный деплой `deploy.sh` откатывает сам.
 - **Обратно на `ru-tracker` (крайний случай):** остановить трекер в Дубае, снять бэкап
   `expenses.db`, перенести его потоком через SSH в
   `/usr/local/etc/finance/VAV-finance-tracker/data/expenses.db` (старые `expenses.db-wal`/`-shm`
@@ -110,8 +87,16 @@ curl -sI https://fomin-vladimir.ru | head -1
 | Где | Что |
 |---|---|
 | `dubai:/opt/finance-tracker/backups/pre-migration-2026-11-12.db` | снимок на момент переезда (sha256 `b5a84398…18e0d`) |
-| `dubai:/opt/finance-tracker/backups/pre-password-rotation-20261112T113256Z.db`, `env-before-rotation-…` | до ротации паролей |
-| `dubai:/opt/finance-tracker/data/backups/expenses-YYYY-MM-DD.db` | ежедневно в 03:00 UTC, хранятся 14 |
+| `dubai:/opt/finance-tracker/backups/pre-password-rotation-20261112T113256Z.db`, `env-before-rotation-…` | до ротации паролей в `.env` |
+| `dubai:/opt/finance-tracker/backups/pre-cd-switch-20261112.db` | перед переключением на CD (sha256 `9bd47d7f…beb6e0`) |
+| `dubai:/opt/finance-tracker/backups/pre-set-password-20261112.db` | перед сменой паролей в базе |
+| `dubai:/opt/finance-tracker/data/backups/expenses-YYYY-MM-DD.db` | ежедневно в 03:00 UTC, хранятся 14 (каталог появится после первого ночного бэкапа) |
 | `dubai:/opt/finance-tracker/data/backups/pre-migrate-<UTC>.db` | перед миграциями БД (с версии 1.1.0), хранятся 10 |
 | `ru-tracker:/usr/local/etc/finance/VAV-finance-tracker/backups/pre-migration-2026-11-12.db` | исходный снимок на старом сервере |
 | `ru-tracker:/usr/local/etc/finance/VAV-finance-tracker/data/backups/` | старые ежедневные бэкапы |
+
+## 7. Можно удалить позже (необязательно)
+Тома и образ временного стека больше не используются: `finance-bootstrap_caddy_data`,
+`finance-bootstrap_caddy_config` и образ `finance-bootstrap-backend`. Агент их не удалял, потому
+что удалять тома ему запрещено. Удалить, если хотите:
+`ssh dubai 'docker volume rm finance-bootstrap_caddy_data finance-bootstrap_caddy_config; docker image rm finance-bootstrap-backend'`.
