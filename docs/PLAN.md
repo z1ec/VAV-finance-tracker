@@ -33,11 +33,11 @@ Brief: `docs/briefs/2026-11-12-stage2a-bot-api.md`.
 - [x] `docs/API_BOT.md`, `docs/openapi.json` + export script + CI check, ADR 0004–0007
 - [x] e2e script (throwaway containers) in CI
 - [x] Migration rehearsal on a copy of prod on the server (integrity ok, counts equal)
-- [ ] PR → CI → merge → Deploy success
-- [ ] Token issued on the server (hash → tracker `.env`, token → bot `.env`), tracker restarted
-- [ ] §8.3 checks from a temp container on `vav-internal`; public domain → 403; bot healthy
-- [ ] Stage 1 tails: `DEPLOY_USER`/`DEPLOY_PORT` → variables; `finance-bootstrap` volumes/image removed
-- [ ] Owner: nothing required (token rotation procedure in `MANUAL_STEPS.ru.md`)
+- [x] PR → CI → merge → Deploy success
+- [x] Token issued on the server (hash → tracker `.env`, token → bot `.env`), tracker restarted
+- [x] §8.3 checks from a temp container on `vav-internal`; public domain → 403; bot healthy
+- [x] Stage 1 tails: `DEPLOY_USER`/`DEPLOY_PORT` → variables (deploy log readable); `finance-bootstrap` volumes/image removed
+- [x] Owner: nothing required (token rotation procedure in `MANUAL_STEPS.ru.md`)
 
 ## Stage 2b — bot integration
 _Placeholder._ The bot joins `vav-internal`, reads `FINANCE_API_URL` / `FINANCE_API_TOKEN` and

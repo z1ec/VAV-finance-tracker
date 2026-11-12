@@ -308,5 +308,42 @@ the token is absent from the backend log.
   `tests/__init__.py`.
 - e2e: the web container needed the network alias `web`.
 
+### Release and bot link (times UTC)
+- PR #3 checks green (lint · typecheck · tests, actionlint · shellcheck, docker build + smoke +
+  **e2e** — "all e2e checks passed" in the runner too). Merged → `main` `f047c1a` at 13:52.
+- Deploy run `43231495819`: CI ✓, build & push ✓, deploy ✓. `deploy.sh`: "deploying sha-f047c1a
+  (last successful: sha-4de83c1)" — the log is readable now (`DEPLOY_USER: deploy`,
+  `DEPLOY_PORT: 22` shown in clear, no `***` in place of "deploy"/"22").
+- 13:55:44 the backend made `data/backups/pre-migrate-20261112T135544Z.db` and applied 0002.
+  After deploy: health `1.2.0`/`f047c1a`, `alembic_version` 0002, `integrity_check ok`, counts
+  users 3 / categories 11 / expenses 87 (all `source=web`) / exchange_rates 116 / budgets 1 /
+  settings 0 / subscriptions 0; `deploy/bot-token.sh` present on the server.
+- 13:56:47 **token issued** with `/opt/finance-tracker/bot-token.sh` (one SSH command, nothing
+  printed but key names): `/opt/momentum/.env` + `FINANCE_API_URL`, `FINANCE_API_TOKEN`;
+  `/opt/finance-tracker/.env` + `BOT_API_TOKEN_SHA256`, `BOT_API_USERNAME`,
+  `BOT_API_ALLOWED_NETWORKS=172.20.0.0/16`. Before/after: the original 43 lines of the bot's
+  `.env` and 10 lines of the tracker's are byte-identical (sha256 of the prefix), only those keys
+  appended; both files still `600 deploy:deploy`. The bot stack was not touched otherwise.
+- 13:57:02 `IMAGE_TAG=$(cat .last_successful_tag) docker compose -p finance-tracker -f
+  docker-compose.prod.yml up -d --force-recreate --no-deps backend` → healthy at 13:57:10
+  (startup guard accepted the bot settings; startup subscriptions catch-up: 0 charges).
+- 13:57:23 **checks §8.3** from `docker run --rm --network vav-internal curlimages/curl:8.11.1`
+  (peer `172.20.0.3`, token from `/opt/momentum/.env` via `--env-file`, only status codes
+  printed): with token `GET /api/categories` **200**, `GET /api/stats/budget` **200**,
+  `GET /api/subscriptions/upcoming` **200**; without token **401**; with token
+  `POST /api/rates/refresh` **403**. `momentum-bot-1` **healthy**, not restarted (up since
+  2026-11-10).
+- Same token from the workstation through the public domain: `GET /api/categories` and
+  `/api/stats/budget` → **403** (Caddy); without token → 401; `/subscriptions.html`,
+  `/dashboard.html` → 200 with «Подписки» and «Ближайшие списания (7 дней)». The workstation's
+  resolver (and Cloudflare's 1.1.1.1 via DoH) still return the old A record `157.22.253.65`
+  (stopped old server, nginx 502), Google DNS returns `81.85.92.119` — the requests were pinned
+  with `curl --resolve …:443:81.85.92.119`. Cache expiry is the owner's note A1 from stage 1.
+- The `MANUAL_STEPS.ru.md` verification one-liner was run as written → `200`. The image
+  `curlimages/curl:8.11.1` stays on the server for that check (small, used by no stack).
+
 ### Open items
-- [ ] PR → CI → merge → Deploy, token issuance, §8.3 checks (next section).
+- [ ] Stage 2b: the bot joins `vav-internal` and reads `FINANCE_API_URL` / `FINANCE_API_TOKEN`
+      (contract: `docs/API_BOT.md`, `docs/openapi.json`).
+- [ ] Optional (owner): purge the Cloudflare DNS cache for `finance.fomin-vladimir.ru`
+      (`MANUAL_STEPS.ru.md` §3 of stage 1) — 1.1.1.1 still serves the old address.
