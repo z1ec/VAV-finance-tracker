@@ -1,196 +1,101 @@
-# Трекер расходов
+# Finance Tracker
 
-Мультивалютный веб-трекер личных расходов (HUF/EUR/RUB) с базовой валютой HUF,
-дашбордом, бюджетами по категориям и ролевым доступом (admin / user).
+[![CI](https://github.com/z1ec/VAV-finance-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/z1ec/VAV-finance-tracker/actions/workflows/ci.yml)
+[![Deploy](https://github.com/z1ec/VAV-finance-tracker/actions/workflows/deploy.yml/badge.svg)](https://github.com/z1ec/VAV-finance-tracker/actions/workflows/deploy.yml)
 
-## Стек
+A self-hosted, multi-currency expense tracker for a small household — **HUF, EUR and RUB** with
+HUF as the base currency, a dashboard, monthly budgets per category and role-based access.
+The interface is in Russian; code and docs are in English.
 
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.x, Pydantic v2, Alembic, APScheduler
-- **БД:** SQLite (WAL)
-- **Frontend:** ванильные HTML/CSS/JS (ES-модули), Chart.js (локально, без CDN)
-- **Инфраструктура:** Docker Compose, Caddy (reverse proxy + статика)
+Live at `https://finance.fomin-vladimir.ru` (private, login required).
 
-## Запуск в три команды
+## Highlights
+- **Money done right.** Every expense stores the original amount, the exchange rate *frozen at
+  write time*, its source and the HUF amount — reports never change when rates do. `Decimal`
+  arithmetic, per-currency rounding (HUF 0, EUR/RUB 2 decimals).
+- **Rates without API keys.** Daily rates from `@fawazahmed0/currency-api` with an `open.er-api`
+  fallback; a deterministic lookup order (exact date → previous date → fetch → ask for a manual
+  rate); manual rates always win.
+- **Dashboard and budgets.** Totals with period-over-period change, breakdowns by category and
+  currency, top expenses, monthly limits per category and overall; Chart.js, dark theme,
+  display currency switch.
+- **Roles enforced in the API.** `admin` edits, `user` reads; tests assert 403 on every admin endpoint.
+- **Safe operations.** Refuses to start on a real domain with default or weak secrets; SQLite
+  backups nightly and before every pending migration; health-checked deploys with automatic
+  rollback.
+- **Production-grade delivery.** Two images in GHCR (non-root FastAPI backend with HEALTHCHECK,
+  Caddy web edge), CI with lint/type/test/image smoke tests, SSH deploy to a VPS shared with a
+  Telegram bot over a private Docker network.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    browser([Browser]) -->|HTTPS 443 · :8443 → 301| web["web<br/>Caddy + static frontend"]
+    web -->|/api/*| backend["backend<br/>FastAPI · SQLAlchemy · APScheduler"]
+    backend --- db[("SQLite (WAL)<br/>+ backups")]
+    backend ---|vav-internal<br/>finance-backend:8000| bot["Momentum bot<br/>(separate project)"]
+    backend -->|daily| rates([currency APIs])
+```
+
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · decisions in [docs/adr/](docs/adr/).
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Backend | Python 3.12, FastAPI, SQLAlchemy 2, Pydantic v2, Alembic, APScheduler |
+| Database | SQLite in WAL mode |
+| Frontend | Vanilla HTML/CSS/ES modules, Chart.js (vendored) |
+| Edge | Caddy 2 (automatic HTTPS) |
+| Quality | ruff, mypy, pytest + coverage, actionlint, shellcheck |
+| Delivery | Docker, GHCR, GitHub Actions, SSH deploy with health check and rollback |
+
+## Quick start (local)
 
 ```bash
-cp .env.example .env    # заполните SECRET_KEY и пароли пользователей
+cp .env.example .env            # keep DOMAIN=localhost; set SECRET_KEY and passwords
 docker compose up -d --build
-open http://localhost   # или просто откройте в браузере
+open http://localhost:8080
 ```
 
-Логины задаются в `.env` (`ADMIN_USERNAME`/`ADMIN_PASSWORD`,
-`USER1_USERNAME`/`USER1_PASSWORD`, `USER2_USERNAME`/`USER2_PASSWORD`).
-При первом старте backend сам создаст пользователей и стартовый набор категорий.
+Users from `.env` (`ADMIN_*`, `USER1_*`, `USER2_*`) and a starter set of categories are created on
+first start. On Linux give the data directory to the container user once:
+`sudo chown -R 10001:10001 data`.
 
-Значение `DOMAIN=localhost` (по умолчанию) держит всё на обычном HTTP для
-локальной разработки. Для деплоя на реальный домен с автоматическим TLS —
-см. раздел [«Деплой на сервер»](#деплой-на-сервер-https-на-порту-8443) ниже
-(HTTPS отдаётся на порту 8443, а не 443).
-
-## Деплой на сервер
-
-Есть два сценария в зависимости от того, свободны ли порты 80/443 на хосте.
-
-### Вариант A — сервер выделен под этот проект (порты 80/443 свободны)
-
-Используются `docker-compose.yml` + `Caddyfile` — Caddy сам получает
-сертификат Let's Encrypt и отдаёт сайт по HTTPS.
-
-1. Выпустить поддомен с A-записью на IP сервера (на голый IP сертификат не
-   выдаётся). Дождаться, пока DNS разрешится: `dig +short expenses.example.com`.
-2. `cp .env.example .env`, заполнить `SECRET_KEY` (`openssl rand -hex 32`),
-   пароли пользователей и `DOMAIN=expenses.example.com`.
-3. `docker compose up -d --build`.
-4. Проверить: `docker compose logs caddy --tail 50` — искать
-   `certificate obtained successfully`. Сайт: `https://expenses.example.com:8443`
-   (HTTPS отдаётся на **8443**, не на 443 — см. Caddyfile; порт 80 нужен
-   только для ACME-проверки).
-
-### Вариант B — на сервере уже есть другой сайт на 80/443 (nginx/Apache/Caddy)
-
-Именно этот случай, если на хосте уже висит другой сайт и/или VPN
-(например, Hysteria) — трогать существующие 80/443 нельзя. Тогда наш Caddy
-вообще не публикует эти порты: он слушает только `127.0.0.1:8080`
-(изнутри сервера), TLS не запрашивает, а существующий веб-сервер
-проксирует на него и сам занимается сертификатом.
-
-Используются `docker-compose.behind-proxy.yml` + `Caddyfile.behind-proxy`.
-
-1. Выпустить поддомен с A-записью на IP сервера (у регистратора/в вашей DNS-зоне),
-   например `finance.example.com A <IP сервера>`.
-
-2. Настроить `.env` как обычно (`cp .env.example .env`, `SECRET_KEY`,
-   пароли, `DOMAIN=finance.example.com` — используется backend'ом для
-   флага `secure` на cookie-сессии, публичные порты при этом не занимает).
-
-3. Поднять стек на внутреннем порту:
-   ```bash
-   docker compose -f docker-compose.behind-proxy.yml up -d --build
-   curl -I http://127.0.0.1:8080/api/health   # должно быть 200, с самого сервера
-   ```
-
-4. Добавить сайт в существующий nginx (замените домен и, если 8080 занят
-   чем-то ещё, поменяйте порт — он должен совпадать с `CADDY_INTERNAL_PORT`
-   из `.env`, по умолчанию 8080):
-   ```nginx
-   # /etc/nginx/sites-available/finance.example.com
-   server {
-       listen 80;
-       listen [::]:80;
-       server_name finance.example.com;
-
-       location / {
-           proxy_pass http://127.0.0.1:8080;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-       }
-   }
-   ```
-   ```bash
-   sudo ln -s /etc/nginx/sites-available/finance.example.com /etc/nginx/sites-enabled/
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
-
-5. Получить сертификат через certbot (если ещё не установлен:
-   `sudo apt install certbot python3-certbot-nginx`):
-   ```bash
-   sudo certbot --nginx -d finance.example.com
-   ```
-   Certbot сам допишет в конфиг `listen 443 ssl` и редирект с 80 на 443,
-   перезагрузит nginx. Сайт: `https://finance.example.com` (обычный 443,
-   которым теперь занимается nginx, а не наш Caddy).
-
-**Обновление после изменений в коде** (для обоих вариантов — используйте
-тот же compose-файл, каким поднимали):
-```bash
-git pull
-docker compose up -d --build                              # вариант A
-docker compose -f docker-compose.behind-proxy.yml up -d --build   # вариант B
-```
-
----
-
-## Структура проекта
-
-```
-expense-tracker/
-├── docker-compose.yml
-├── Caddyfile
-├── .env.example
-├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── alembic.ini
-│   ├── migrations/          # схема БД версионируется через Alembic
-│   ├── tests/                # pytest: currency.py + права доступа
-│   └── app/
-│       ├── main.py           # сборка FastAPI, миграции при старте, обработчики ошибок
-│       ├── config.py         # pydantic-settings
-│       ├── db.py             # engine/session, WAL
-│       ├── models.py         # SQLAlchemy ORM
-│       ├── schemas.py        # Pydantic-схемы
-│       ├── auth.py           # bcrypt, подписанная cookie-сессия, лимит попыток входа
-│       ├── deps.py           # get_current_user / require_admin
-│       ├── currency.py       # конвертация, округление, выбор и приоритет курса
-│       ├── scheduler.py      # ежедневное обновление курсов и бэкапы (APScheduler)
-│       ├── seed.py           # сид пользователей и категорий
-│       └── routers/          # auth, expenses, categories, rates, stats, budgets
-└── frontend/
-    ├── index.html             # Операции
-    ├── login.html
-    ├── dashboard.html
-    ├── settings.html          # только для admin
-    ├── css/style.css          # дизайн-система, тёмная тема через CSS-переменные
-    ├── js/
-    │   ├── api.js             # обёртка над fetch, единая обработка ошибок/401
-    │   ├── common.js          # шапка, тема, валюта отображения, форматирование, TZ
-    │   ├── expenses.js
-    │   ├── dashboard.js
-    │   └── settings.js
-    └── vendor/chart.umd.min.js
-```
-
-## Ключевые принципы реализации
-
-- **HUF — базовая валюта.** Все суммы нормализуются в HUF при сохранении
-  (`amount_huf`), вся агрегация в отчётах считается по HUF и уже на фронте
-  пересчитывается в выбранную валюту отображения (переключатель в шапке,
-  хранится в `localStorage`).
-- **Курс фиксируется в момент операции** и хранится в самой записи
-  (`rate_to_huf`, `rate_source`) — изменение курсов в будущем не трогает
-  исторические отчёты.
-- Источник курсов — `@fawazahmed0/currency-api` (без ключа и лимитов,
-  поддерживает RUB), с резервом на `open.er-api.com`, если основной недоступен.
-- Порядок выбора курса при создании операции: курс на дату операции →
-  ближайший предыдущий доступный курс → запрос к API на нужную дату →
-  422 с предложением ввести курс вручную. Ручной курс имеет приоритет и не
-  перезаписывается планировщиком.
-- **Время** хранится в UTC (ISO 8601), отображается в зоне `Europe/Budapest`
-  через `Intl.DateTimeFormat`/`Intl.NumberFormat` (`ru-RU`) — учитывается
-  переход между UTC+1/UTC+2.
-- Роль пользователя проверяется на уровне API (`require_admin`), а не только
-  скрытием кнопок в интерфейсе.
-
-## Тесты
+### Development
 
 ```bash
 cd backend
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pytest -q
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements-dev.txt
+.venv/bin/pytest                      # tests + coverage
+.venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/mypy
+DB_PATH=../data/dev.db BACKUP_DIR=../data/backups .venv/bin/uvicorn app.main:app --reload
+# API only, http://127.0.0.1:8000
 ```
 
-Покрыто: конвертация валют и округление (`HUF` — 0 знаков, `EUR`/`RUB` — 2,
-через `Decimal`), выбор курса при отсутствии данных на нужную дату,
-приоритет ручного курса над курсом из API, а также права доступа —
-`user` получает 403 на всех админских эндпоинтах.
+## Deployment
 
-## Бэкапы
+Push to `main` → CI → both images are built and pushed to GHCR with one `sha-<7>` tag → the deploy
+job copies `deploy/` to the server over SSH and runs `deploy.sh`, which waits for the backend's
+Docker health and the public `https://…/api/health`, and rolls both services back otherwise.
+Roll back manually with *Actions → Deploy → Run workflow → image_tag*.
+Details, secrets, restore and server-move playbook: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-Ежедневно в 03:00 UTC создаётся копия БД (`sqlite3 .backup`) в
-`/data/backups/expenses-YYYY-MM-DD.db`, хранятся последние 14 копий.
-Курсы валют обновляются ежедневно в 04:00 UTC; при старте приложения,
-если курса за сегодня ещё нет, он подтягивается сразу.
-# VAV-finance-tracker
+## Project layout
+
+```
+backend/            FastAPI app (app/), Alembic migrations, tests, Dockerfile, pyproject.toml
+frontend/           static pages and ES modules (login, expenses, dashboard, settings)
+web/                Caddy image: Dockerfile + production Caddyfile
+deploy/             docker-compose.prod.yml, deploy.sh
+.github/workflows/  ci.yml, deploy.yml
+docs/               architecture, deployment, ADRs, dev log, plan, briefs
+```
+
+## Documentation
+- [CLAUDE.md](CLAUDE.md) — working agreement for AI agents: commands, module map, pitfalls
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/adr/](docs/adr/)
+- [docs/DEVLOG.md](docs/DEVLOG.md) · [docs/PLAN.md](docs/PLAN.md) · [CHANGELOG.md](CHANGELOG.md)
+- [docs/MANUAL_STEPS.ru.md](docs/MANUAL_STEPS.ru.md) — owner's checklist (Russian)
