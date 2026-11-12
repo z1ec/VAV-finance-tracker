@@ -9,6 +9,9 @@ versioning: [SemVer](https://semver.org/).
 - Startup guard: on a real `DOMAIN` the backend refuses to start with an empty/default/short
   `SECRET_KEY` or a default/short user password (setting names only, never values); warns on
   `localhost`.
+- Management command `python -m app.manage set-password` (`--from-env ADMIN USER1` or
+  `--username NAME` with the password on stdin); `.env` passwords are only used when a user is
+  first created.
 - Automatic `pre-migrate-<UTC>.db` backup when Alembic migrations are pending (newest 10 kept).
 - `/api/health` reports `version` and `git_sha`; both are logged on startup.
 - Production images in GHCR: `finance-tracker-backend` (non-root uid 10001, HEALTHCHECK) and

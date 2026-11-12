@@ -48,25 +48,20 @@ curl -s https://finance.fomin-vladimir.ru/api/health            # "version":"1.1
 `/opt/finance-tracker/.env`. Копия лежит в `/root/finance-tracker-new-passwords.txt` (права 600,
 только root). Пароль `USER2` и `SECRET_KEY` не менялись.
 
-**Важно:** обновить хэши в базе агенту не разрешили. Поэтому сейчас **работают старые пароли**,
-а новые ещё не действуют. Чтобы включить новые пароли (на `dubai` под root; контейнер —
-`finance-bootstrap-backend-1` до переключения на CD или `finance-tracker-backend-1` после):
+**Как меняются пароли.** Пароли из `.env` используются только при **первом** создании
+пользователя (seed). Если поменять их в `.env`, у существующих пользователей ничего не
+изменится. Для смены служит управляющая команда трекера (сначала сделайте бэкап базы):
 ```bash
-C=$(docker ps --format '{{.Names}}' | grep -E '^finance-(bootstrap|tracker)-backend-1$')
-grep -v '^#' /root/finance-tracker-new-passwords.txt | docker exec -i "$C" python -c '
-import sys
-from sqlalchemy import select
-from app.auth import hash_password
-from app.db import SessionLocal
-from app.models import User
-db = SessionLocal(); n = 0
-for line in sys.stdin:
-    if not line.strip(): continue
-    u, p = line.rstrip("\n").split("\t", 1)
-    user = db.execute(select(User).where(User.username == u)).scalar_one_or_none()
-    if user: user.password_hash = hash_password(p); n += 1
-db.commit(); print("updated", n)'
+# пароли ADMIN и USER1 из текущего .env
+docker exec finance-tracker-backend-1 python -m app.manage set-password --from-env ADMIN USER1
+# любой пользователь: пароль идёт через stdin (не виден в ps); read -rs, чтобы не попал в историю
+read -rs NEWPW
+printf "%s" "$NEWPW" | docker exec -i finance-tracker-backend-1 \
+  python -m app.manage set-password --username <логин>
 ```
+Команда отклоняет пароли короче 12 символов и стандартные значения. Она меняет всё или ничего
+и не печатает пароли.
+
 Затем заберите пароли (`ssh dubai cat /root/finance-tracker-new-passwords.txt`), сохраните в
 менеджер паролей, передайте пользователю `USER1` и **удалите файл**:
 `ssh dubai shred -u /root/finance-tracker-new-passwords.txt`.

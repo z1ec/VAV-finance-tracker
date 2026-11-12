@@ -29,6 +29,7 @@ cp .env.example .env && docker compose up -d --build   # local stack → http://
 | `backend/app/config.py` | `Settings` (pydantic-settings, `.env`), defaults, `APP_VERSION`/`GIT_SHA`. |
 | `backend/app/security.py` | Startup guard: refuse default/weak secrets on a real domain, warn on localhost. |
 | `backend/app/migrate.py` | Programmatic `alembic upgrade head`; `pre-migrate-<UTC>.db` backup when migrations are pending (keeps 10). |
+| `backend/app/manage.py` | Management CLI: `python -m app.manage set-password --from-env ADMIN USER1` or `--username NAME` (password on stdin). |
 | `backend/app/backup.py` | `sqlite_backup` (online backup API) and pruning; used by migrations and the nightly job. |
 | `backend/app/scheduler.py` | APScheduler (UTC): rates 04:00, backup 03:00 (`expenses-YYYY-MM-DD.db`, keeps 14). |
 | `backend/app/currency.py` | Rate fetch (jsdelivr currency-api → open.er-api fallback), rate selection, Decimal rounding. |
@@ -63,7 +64,8 @@ cp .env.example .env && docker compose up -d --build   # local stack → http://
   sqlite backup API (`app/backup.py` or `sqlite3 .backup`), never by copying the file while running.
 - **Secrets guard.** With `DOMAIN != localhost` the backend exits on start if `SECRET_KEY` < 32 chars
   or a configured password is default/< 12 chars. Changing `*_PASSWORD` in `.env` does **not** change
-  existing users (seed only creates missing users) — update the hash in the DB too.
+  existing users (seed only creates missing users) — run
+  `docker exec finance-tracker-backend-1 python -m app.manage set-password --from-env ADMIN` (after a backup).
 - **Container user.** Backend runs as uid 10001; host `data/` must be owned by 10001.
 - **`ru-tracker` (old server).** Tracker stack is stopped (not removed) with backups in
   `/usr/local/etc/finance/VAV-finance-tracker/backups/`. Its nginx also serves another site
