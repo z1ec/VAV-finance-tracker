@@ -1,36 +1,34 @@
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-from alembic import command
-from alembic.config import Config as AlembicConfig
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
+from app.config import settings
 from app.currency import RateUnavailableError, ensure_today_rates
 from app.db import SessionLocal
 from app.logging_config import configure_logging
+from app.migrate import run_migrations
 from app.models import ExchangeRate
 from app.routers import auth, budgets, categories, expenses, rates, stats
 from app.scheduler import shutdown_scheduler, start_scheduler
+from app.security import check_secrets
 from app.seed import run_seed
 
 configure_logging()
 logger = logging.getLogger("app")
 
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-
-
-def run_migrations() -> None:
-    cfg = AlembicConfig(str(BACKEND_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
-    command.upgrade(cfg, "head")
-
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    logger.info(
+        "startup",
+        extra={"version": settings.app_version, "git_sha": settings.git_sha},
+    )
+    check_secrets(settings)
     run_migrations()
     db = SessionLocal()
     try:
@@ -95,5 +93,7 @@ def health():
     return {
         "status": "ok",
         "db": db_status,
+        "version": settings.app_version,
+        "git_sha": settings.git_sha,
         "last_rates_update": last_rate.fetched_at if last_rate else None,
     }
