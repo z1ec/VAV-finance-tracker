@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -49,7 +49,7 @@ def test_get_rate_for_date_falls_back_to_nearest_previous(db_session):
     upsert_rate(db_session, "2026-01-10", "EUR", Decimal("388"), "api")
     db_session.commit()
 
-    rate, source, date_used = get_rate_for_date(db_session, "EUR", date(2026, 1, 15))
+    rate, _source, date_used = get_rate_for_date(db_session, "EUR", date(2026, 1, 15))
     assert rate == Decimal("388")
     assert date_used == "2026-01-10"
 
@@ -130,13 +130,13 @@ def test_resolve_expense_rate_prefers_explicit_manual_rate(db_session):
     db_session.commit()
 
     rate, source = resolve_expense_rate(
-        db_session, "EUR", datetime(2026, 3, 1, tzinfo=timezone.utc), Decimal("360")
+        db_session, "EUR", datetime(2026, 3, 1, tzinfo=UTC), Decimal("360")
     )
     assert rate == Decimal("360")
     assert source == "manual"
 
 
 def test_resolve_expense_rate_huf_is_always_one_without_db_lookup(db_session):
-    rate, source = resolve_expense_rate(db_session, "HUF", datetime(2026, 3, 1, tzinfo=timezone.utc), None)
+    rate, source = resolve_expense_rate(db_session, "HUF", datetime(2026, 3, 1, tzinfo=UTC), None)
     assert rate == Decimal("1")
     assert source == "api"

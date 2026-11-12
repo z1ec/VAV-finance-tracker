@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -15,7 +15,7 @@ router = APIRouter()
 
 @router.get("/latest")
 def latest_rates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
     result: dict[str, float | str] = {"HUF": 1.0}
     dates_found: list[str] = []
     for cur in ("EUR", "RUB"):
@@ -33,21 +33,27 @@ def latest_rates(db: Session = Depends(get_db), user: User = Depends(get_current
 
 
 @router.get("", response_model=list[RateOut])
-def rates_for_date(date: str = Query(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def rates_for_date(
+    date: str = Query(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
     rows = db.execute(select(ExchangeRate).where(ExchangeRate.date == date)).scalars().all()
     return rows
 
 
 @router.post("", response_model=RateOut, status_code=201)
-def set_manual_rate(payload: RateManualCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    row = upsert_rate(db, payload.date, payload.currency, to_decimal(payload.rate_to_huf), "manual", force=True)
+def set_manual_rate(
+    payload: RateManualCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)
+):
+    row = upsert_rate(
+        db, payload.date, payload.currency, to_decimal(payload.rate_to_huf), "manual", force=True
+    )
     db.commit()
     return row
 
 
 @router.post("/refresh")
 def refresh(db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
     try:
         rates = refresh_rates_for_date(db, today)
     except RateUnavailableError as exc:

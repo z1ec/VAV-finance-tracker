@@ -4,6 +4,11 @@ backend/.venv/
 backend/__pycache__/
 backend/**/__pycache__/
 backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.coverage
+backend/coverage.xml
+backend/htmlcov/
 backend/tests/test_data/
 *.pyc
 .DS_Store

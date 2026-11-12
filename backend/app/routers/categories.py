@@ -28,11 +28,15 @@ def create_category(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    existing = db.execute(select(Category).where(Category.name == payload.name)).scalar_one_or_none()
+    existing = db.execute(
+        select(Category).where(Category.name == payload.name)
+    ).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail="Категория с таким именем уже существует")
 
-    max_order = db.execute(select(Category.sort_order).order_by(Category.sort_order.desc()).limit(1)).scalar_one_or_none()
+    max_order = db.execute(
+        select(Category.sort_order).order_by(Category.sort_order.desc()).limit(1)
+    ).scalar_one_or_none()
     category = Category(
         name=payload.name,
         color=payload.color,
@@ -58,7 +62,9 @@ def update_category(
 
     data = payload.model_dump(exclude_unset=True)
     if "name" in data and data["name"] != category.name:
-        existing = db.execute(select(Category).where(Category.name == data["name"])).scalar_one_or_none()
+        existing = db.execute(
+            select(Category).where(Category.name == data["name"])
+        ).scalar_one_or_none()
         if existing:
             raise HTTPException(status_code=409, detail="Категория с таким именем уже существует")
 
@@ -71,7 +77,9 @@ def update_category(
 
 
 @router.post("/{category_id}/archive", response_model=CategoryOut)
-def archive_category(category_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def archive_category(
+    category_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
+):
     category = db.get(Category, category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Категория не найдена")
@@ -82,7 +90,9 @@ def archive_category(category_id: int, db: Session = Depends(get_db), _: User = 
 
 
 @router.post("/{category_id}/unarchive", response_model=CategoryOut)
-def unarchive_category(category_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def unarchive_category(
+    category_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
+):
     category = db.get(Category, category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Категория не найдена")

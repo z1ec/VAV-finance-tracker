@@ -1,0 +1,56 @@
+[project]
+name = "finance-tracker-backend"
+version = "1.1.0"
+description = "Multi-currency expense tracker (HUF/EUR/RUB) — FastAPI backend"
+readme = "../README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "z1ec" }]
+# Runtime dependencies are pinned in requirements.txt (used by the Docker image);
+# development tools live in requirements-dev.txt.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "tests/test_data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "RUF", "SIM"]
+# RUF001-003: Cyrillic UI strings and comments are intentional.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: asserts, fixed test passwords, subprocess calls to the deploy script.
+"tests/**" = ["S101", "S105", "S106", "S603", "S607"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+files = ["app", "migrations", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["passlib.*", "apscheduler.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+skip_empty = true

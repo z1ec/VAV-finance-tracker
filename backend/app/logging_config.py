@@ -1,12 +1,29 @@
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 _SKIP_KEYS = {
-    "args", "msg", "exc_info", "exc_text", "stack_info", "levelname", "levelno",
-    "name", "pathname", "filename", "module", "lineno", "funcName", "created",
-    "msecs", "relativeCreated", "thread", "threadName", "processName", "process",
+    "args",
+    "msg",
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "levelname",
+    "levelno",
+    "name",
+    "pathname",
+    "filename",
+    "module",
+    "lineno",
+    "funcName",
+    "created",
+    "msecs",
+    "relativeCreated",
+    "thread",
+    "threadName",
+    "processName",
+    "process",
     "taskName",
 }
 
@@ -14,7 +31,7 @@ _SKIP_KEYS = {
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
