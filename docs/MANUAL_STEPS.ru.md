@@ -1,4 +1,63 @@
-# Ручные шаги владельца — этап 1
+# Ручные шаги владельца
+
+## Этап 2a — API для бота и подписки (2026-11-12)
+
+**Обязательных действий нет.** Трекер версии 1.2.0 умеет принимать операции от бота Momentum,
+считает дни и месяцы по времени Будапешта и ведёт подписки.
+
+### Токен бота — как устроено
+- Токен сгенерирован **на сервере** скриптом `/opt/finance-tracker/bot-token.sh`. Его значение
+  не выводилось и нигде не сохранялось, кроме `/opt/momentum/.env` (`FINANCE_API_TOKEN`, рядом
+  `FINANCE_API_URL=http://finance-backend:8000`).
+- В `/opt/finance-tracker/.env` лежит только SHA-256 токена (`BOT_API_TOKEN_SHA256`),
+  пользователь, от имени которого бот пишет операции (`BOT_API_USERNAME` — ваш admin), и подсеть
+  сети `vav-internal` (`BOT_API_ALLOWED_NETWORKS=172.20.0.0/16`).
+- Токен работает **только изнутри сервера** (контейнер в сети `vav-internal`). Через
+  `https://finance.fomin-vladimir.ru` любой запрос с заголовком `Authorization` получает 403.
+- Сейчас бот эти переменные ещё не читает — его подключение к трекеру будет на этапе 2b. Стек
+  бота не перезапускался.
+
+### Как перевыпустить токен (если он мог утечь)
+Одна команда; новый токен сразу заменит старый в обоих `.env`, старый перестанет работать после
+перезапуска трекера:
+```bash
+ssh dubai '/opt/finance-tracker/bot-token.sh && cd /opt/finance-tracker && IMAGE_TAG=$(cat .last_successful_tag) docker compose -p finance-tracker -f docker-compose.prod.yml up -d --force-recreate backend'
+```
+После этого перезапустите бота так, как это принято в его проекте, чтобы он прочитал новый
+`FINANCE_API_TOKEN` (до этапа 2b не нужно). Значение токена никуда копировать не надо.
+
+Проверить, что токен работает (значение не печатается, выводятся только коды ответа):
+```bash
+ssh dubai 'docker run --rm --network vav-internal --env-file <(grep "^FINANCE_API_TOKEN=" /opt/momentum/.env) curlimages/curl:8.11.1 sh -c "curl -s -o /dev/null -w \"%{http_code}\n\" -H \"Authorization: Bearer \$FINANCE_API_TOKEN\" http://finance-backend:8000/api/categories"'
+```
+Ожидается `200`.
+
+**Отключить токен совсем:** в `/opt/finance-tracker/.env` оставить `BOT_API_TOKEN_SHA256=` пустым
+и перезапустить backend той же командой `docker compose … up -d --force-recreate backend`.
+
+**Если бот получает 429:** было 5 неверных токенов за 15 минут с его адреса, и адрес временно
+заблокирован даже для правильного токена. Подождите 15 минут или перезапустите backend.
+
+### Подписки — как пользоваться
+- Вкладка «Подписки» на сайте: добавление, редактирование, отключение; блок «Ждут суммы» для
+  плавающих платежей (кнопки «Внести сумму» и «Пропустить»); сумма «в месяц».
+- Фиксированные подписки записываются в расходы сами — каждый день в 06:00 по Будапешту и при
+  каждом перезапуске трекера, с пометкой 🔁 и комментарием «Подписка: …». Пропущенные даты
+  догоняются, дубли не создаются.
+- Если дата списания 31-го, в коротких месяцах списание будет в последний день месяца.
+- Отключённая подписка не списывается. При повторном включении пропущенные за время отключения
+  даты не списываются — следующая дата берётся начиная с сегодняшнего дня.
+- На дашборде блок «Ближайшие списания (7 дней)».
+
+### Хвосты этапа 1 — закрыты
+- `DEPLOY_USER` и `DEPLOY_PORT` перенесены из секретов в переменные окружения `production`,
+  поэтому логи деплоя больше не прячут слова «deploy» и «22» под `***`.
+- Тома `finance-bootstrap_caddy_data`, `finance-bootstrap_caddy_config` и образ
+  `finance-bootstrap-backend` удалены после проверки, что их не использует ни один контейнер.
+
+---
+
+# Этап 1 — ручные шаги владельца
 
 Состояние на 2026-11-12, 12:30 UTC: трекер работает в Дубае на CI/CD
 (`https://finance.fomin-vladimir.ru`, версия 1.1.0, образы `sha-22e0d1c`). Данные сверены.
@@ -9,9 +68,9 @@
 - Ключ `finance-tracker-deploy` добавлен в `/home/deploy/.ssh/authorized_keys` на `dubai`
   (ключ бота `momentum-deploy` не тронут). Локальная копия приватного ключа удалена, он хранится
   только в секрете `DEPLOY_SSH_KEY`.
-- В окружении `production` заданы секреты `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`,
-  `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. Переменные: `DEPLOY_PLATFORM=linux/amd64`,
-  `DEPLOY_ENABLED=true`.
+- В окружении `production` заданы секреты `DEPLOY_HOST`, `DEPLOY_SSH_KEY`,
+  `DEPLOY_KNOWN_HOSTS` и переменные `DEPLOY_USER=deploy`, `DEPLOY_PORT=22` (с этапа 2a — не
+  секреты). Переменные репозитория: `DEPLOY_PLATFORM=linux/amd64`, `DEPLOY_ENABLED=true`.
 - Каждый merge в `main` теперь автоматически выкатывается на сервер. Временно отключить
   автодеплой: `gh variable set DEPLOY_ENABLED -R z1ec/VAV-finance-tracker --body false`.
 - Отозвать доступ GitHub Actions: удалить строку `finance-tracker-deploy` из
@@ -95,8 +154,7 @@ curl -sI https://fomin-vladimir.ru | head -1
 | `ru-tracker:/usr/local/etc/finance/VAV-finance-tracker/backups/pre-migration-2026-11-12.db` | исходный снимок на старом сервере |
 | `ru-tracker:/usr/local/etc/finance/VAV-finance-tracker/data/backups/` | старые ежедневные бэкапы |
 
-## 7. Можно удалить позже (необязательно)
-Тома и образ временного стека больше не используются: `finance-bootstrap_caddy_data`,
-`finance-bootstrap_caddy_config` и образ `finance-bootstrap-backend`. Агент их не удалял, потому
-что удалять тома ему запрещено. Удалить, если хотите:
-`ssh dubai 'docker volume rm finance-bootstrap_caddy_data finance-bootstrap_caddy_config; docker image rm finance-bootstrap-backend'`.
+## 7. Остатки временного стека — удалены
+Тома `finance-bootstrap_caddy_data`, `finance-bootstrap_caddy_config` и образ
+`finance-bootstrap-backend` удалены 2026-11-12 на этапе 2a, после проверки, что их не использует
+ни один контейнер.

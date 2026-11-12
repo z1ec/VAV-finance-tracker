@@ -8,7 +8,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = "GET", body, params } = {}) {
+async function request(path, { method = "GET", body, params, headers } = {}) {
   let url = BASE + path;
   if (params) {
     const search = new URLSearchParams();
@@ -24,7 +24,7 @@ async function request(path, { method = "GET", body, params } = {}) {
     if (qs) url += "?" + qs;
   }
 
-  const opts = { method, credentials: "include", headers: {} };
+  const opts = { method, credentials: "include", headers: { ...(headers || {}) } };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -66,8 +66,18 @@ async function request(path, { method = "GET", body, params } = {}) {
 
 export const api = {
   get: (path, params) => request(path, { method: "GET", params }),
-  post: (path, body) => request(path, { method: "POST", body: body ?? {} }),
+  post: (path, body, headers) => request(path, { method: "POST", body: body ?? {}, headers }),
   patch: (path, body) => request(path, { method: "PATCH", body: body ?? {} }),
   put: (path, body) => request(path, { method: "PUT", body: body ?? {} }),
   del: (path) => request(path, { method: "DELETE" }),
 };
+
+/** A fresh Idempotency-Key: create it when a form opens, so a double submit is not a duplicate. */
+export function newIdempotencyKey() {
+  if (globalThis.crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const hex = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0"));
+  hex[6] = "4" + hex[6][1];
+  hex[8] = ((parseInt(hex[8], 16) & 0x3f) | 0x80).toString(16);
+  const h = hex.join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}

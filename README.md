@@ -19,7 +19,15 @@ Live at `https://finance.fomin-vladimir.ru` (private, login required).
 - **Dashboard and budgets.** Totals with period-over-period change, breakdowns by category and
   currency, top expenses, monthly limits per category and overall; Chart.js, dark theme,
   display currency switch.
-- **Roles enforced in the API.** `admin` edits, `user` reads; tests assert 403 on every admin endpoint.
+- **Subscriptions.** Fixed-amount subscriptions are recorded automatically on their day
+  (31st and 29 February handled), variable ones wait for the amount; upcoming charges and the
+  monthly total on the dashboard.
+- **Bot API.** The Momentum Telegram bot records expenses (text, voice, receipts) and reads
+  stats through a service token that works only inside a private Docker network, on an endpoint
+  allowlist, with idempotent writes — contract in [docs/API_BOT.md](docs/API_BOT.md).
+- **Correct local days.** Periods, months and budgets follow Europe/Budapest time, DST included.
+- **Roles enforced in the API.** `admin` edits, `user` reads; a matrix test checks every endpoint
+  for admin, user, bot token and anonymous callers.
 - **Safe operations.** Refuses to start on a real domain with default or weak secrets; SQLite
   backups nightly and before every pending migration; health-checked deploys with automatic
   rollback.

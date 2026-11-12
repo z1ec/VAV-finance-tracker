@@ -1,6 +1,6 @@
 [project]
 name = "finance-tracker-backend"
-version = "1.1.0"
+version = "1.2.0"
 description = "Multi-currency expense tracker (HUF/EUR/RUB) — FastAPI backend"
 readme = "../README.md"
 requires-python = ">=3.12"

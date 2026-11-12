@@ -1,8 +1,9 @@
 import csv
 import io
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -13,10 +14,28 @@ from app.currency import (
     to_decimal,
 )
 from app.db import get_db
-from app.deps import get_current_user, require_admin
+from app.deps import Actor, get_current_user, require_admin, require_writer
+from app.expense_service import (
+    build_expense,
+    commit_idempotent,
+    ensure_same_request,
+    find_by_key,
+    normalize_decimal,
+    parse_idempotency_key,
+    request_fingerprint,
+    resolve_occurred_at,
+)
 from app.filters import filtered_expenses_query
 from app.models import Category, Expense, User
 from app.schemas import ExpenseCreate, ExpenseListOut, ExpenseOut, ExpenseUpdate
+
+IdempotencyKey = Annotated[
+    str | None,
+    Header(
+        alias="Idempotency-Key",
+        description="UUID; required for the bot token, optional for the site (ADR-0005).",
+    ),
+]
 
 router = APIRouter()
 
@@ -63,6 +82,7 @@ def export_csv(
             "amount_huf",
             "rate_source",
             "comment",
+            "source",
         ]
     )
     for e in items:
@@ -77,6 +97,7 @@ def export_csv(
                 e.amount_huf,
                 e.rate_source,
                 e.comment or "",
+                e.source,
             ]
         )
 
@@ -123,41 +144,77 @@ def list_expenses(
     )
 
 
-@router.post("", response_model=ExpenseOut, status_code=201)
+def _load(db: Session, expense_id: int) -> Expense:
+    return db.execute(
+        select(Expense).options(joinedload(Expense.category)).where(Expense.id == expense_id)
+    ).scalar_one()
+
+
+@router.post(
+    "",
+    response_model=ExpenseOut,
+    status_code=201,
+    responses={
+        200: {"description": "Replay: the expense created earlier with this Idempotency-Key"},
+        409: {"description": "Idempotency-Key already used with different content"},
+    },
+)
 def create_expense(
-    payload: ExpenseCreate, db: Session = Depends(get_db), user: User = Depends(require_admin)
+    payload: ExpenseCreate,
+    response: Response,
+    idempotency_key: IdempotencyKey = None,
+    db: Session = Depends(get_db),
+    actor: Actor = Depends(require_writer),
 ):
+    key = parse_idempotency_key(idempotency_key, required=actor.via_token)
+    occurred_at = (
+        resolve_occurred_at(payload.occurred_at, actor.via_token, datetime.now(UTC))
+        if payload.occurred_at is not None
+        else None
+    )
+    fingerprint = request_fingerprint(
+        "expense.create",
+        {
+            "amount": normalize_decimal(payload.amount),
+            "currency": payload.currency,
+            "category_id": payload.category_id,
+            "comment": payload.comment,
+            "occurred_at": occurred_at.isoformat() if occurred_at else None,
+            "rate_to_huf": normalize_decimal(payload.rate_to_huf),
+        },
+    )
+
+    def replay(existing: Expense) -> Expense:
+        response.status_code = status.HTTP_200_OK
+        return _load(db, existing.id)
+
+    if key:
+        existing = find_by_key(db, key)
+        if existing is not None:
+            ensure_same_request(existing, fingerprint)
+            return replay(existing)
+
     category = db.get(Category, payload.category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Категория не найдена")
 
-    occurred_at = payload.occurred_at or datetime.now(UTC)
-    if occurred_at.tzinfo is None:
-        occurred_at = occurred_at.replace(tzinfo=UTC)
-
-    amount = to_decimal(payload.amount)
-    manual_rate = to_decimal(payload.rate_to_huf) if payload.rate_to_huf is not None else None
-
-    try:
-        rate, source = resolve_expense_rate(db, payload.currency, occurred_at, manual_rate)
-    except RateUnavailableError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    expense = Expense(
-        amount=amount,
+    expense = build_expense(
+        db,
+        amount=payload.amount,
         currency=payload.currency,
-        rate_to_huf=rate,
-        amount_huf=convert_to_huf(amount, rate),
-        rate_source=source,
         category_id=payload.category_id,
         comment=payload.comment,
-        occurred_at=occurred_at.isoformat(),
-        created_by=user.id,
+        occurred_at=occurred_at or datetime.now(UTC),
+        user_id=actor.user.id,
+        source="telegram" if actor.via_token else "web",
+        manual_rate=payload.rate_to_huf,
+        client_request_id=key,
+        client_request_hash=fingerprint if key else None,
     )
-    db.add(expense)
-    db.commit()
-    db.refresh(expense)
-    return expense
+    replayed = commit_idempotent(db, key, fingerprint, replay)
+    if replayed is not None:
+        return replayed
+    return _load(db, expense.id)
 
 
 @router.patch("/{expense_id}", response_model=ExpenseOut)
@@ -165,7 +222,7 @@ def update_expense(
     expense_id: int,
     payload: ExpenseUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_admin),
+    actor: Actor = Depends(require_writer),
 ):
     expense = db.get(Expense, expense_id)
     if not expense or expense.deleted_at:
@@ -183,9 +240,7 @@ def update_expense(
         expense.comment = data["comment"]
 
     if "occurred_at" in data and data["occurred_at"] is not None:
-        occurred_at = data["occurred_at"]
-        if occurred_at.tzinfo is None:
-            occurred_at = occurred_at.replace(tzinfo=UTC)
+        occurred_at = resolve_occurred_at(data["occurred_at"], actor.via_token, datetime.now(UTC))
         expense.occurred_at = occurred_at.isoformat()
     occurred_at_dt = datetime.fromisoformat(expense.occurred_at)
 
@@ -219,7 +274,7 @@ def update_expense(
 
 @router.delete("/{expense_id}", status_code=204)
 def delete_expense(
-    expense_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
+    expense_id: int, db: Session = Depends(get_db), _: Actor = Depends(require_writer)
 ):
     expense = db.get(Expense, expense_id)
     if not expense or expense.deleted_at:
@@ -231,7 +286,7 @@ def delete_expense(
 
 @router.post("/{expense_id}/restore", response_model=ExpenseOut)
 def restore_expense(
-    expense_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
+    expense_id: int, db: Session = Depends(get_db), _: Actor = Depends(require_writer)
 ):
     expense = db.get(Expense, expense_id)
     if not expense or not expense.deleted_at:

@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import get_current_user, require_admin
+from app.deps import Actor, get_reader, require_admin
 from app.models import Category, User
 from app.schemas import CategoryCreate, CategoryOut, CategoryUpdate
 
@@ -14,7 +14,7 @@ router = APIRouter()
 def list_categories(
     include_archived: bool = Query(default=False),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    actor: Actor = Depends(get_reader),
 ):
     query = select(Category).order_by(Category.sort_order, Category.name)
     if not include_archived:

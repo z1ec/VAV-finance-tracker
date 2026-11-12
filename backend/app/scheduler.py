@@ -1,6 +1,7 @@
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -9,6 +10,7 @@ from app.backup import prune_backups, sqlite_backup
 from app.config import settings
 from app.currency import refresh_rates_for_date
 from app.db import SessionLocal
+from app.subscriptions import process_due_subscriptions
 
 logger = logging.getLogger("scheduler")
 
@@ -39,11 +41,29 @@ def backup_job() -> None:
         logger.exception("backup_failed")
 
 
+def subscriptions_job() -> None:
+    """Charge due subscriptions (06:00 local time daily and once on startup)."""
+    db = SessionLocal()
+    try:
+        created = process_due_subscriptions(db)
+        logger.info("subscriptions_processed", extra={"charges_created": created})
+    except Exception:
+        logger.exception("subscriptions_job_failed")
+    finally:
+        db.close()
+
+
 def start_scheduler() -> None:
     scheduler.add_job(
         refresh_rates_job, CronTrigger(hour=4, minute=0), id="refresh_rates", replace_existing=True
     )
     scheduler.add_job(backup_job, CronTrigger(hour=3, minute=0), id="backup", replace_existing=True)
+    scheduler.add_job(
+        subscriptions_job,
+        CronTrigger(hour=6, minute=0, timezone=ZoneInfo(settings.tz)),
+        id="subscriptions",
+        replace_existing=True,
+    )
     if not scheduler.running:
         scheduler.start()
 

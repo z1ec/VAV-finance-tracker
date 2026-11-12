@@ -8,7 +8,7 @@ shared with the Momentum bot (`/opt/momentum`). Decisions: ADR-0002, ADR-0003.
 
 ```mermaid
 flowchart LR
-    pr[PR / push to any branch] --> ci["CI<br/>ruff · mypy · pytest+cov<br/>actionlint · shellcheck · deploy.sh dry run<br/>build both images + smoke"]
+    pr[PR / push to any branch] --> ci["CI<br/>ruff · mypy · pytest+cov (incl. openapi.json check)<br/>actionlint · shellcheck · deploy.sh dry run<br/>build both images + smoke + e2e bot API"]
     main[push to main] --> ci2[CI] --> build["build & push<br/>ghcr.io/z1ec/finance-tracker-backend:sha-xxxxxxx<br/>ghcr.io/z1ec/finance-tracker-web:sha-xxxxxxx<br/>(+ latest)"]
     build --> gate{"vars.DEPLOY_ENABLED<br/>== 'true'?"}
     gate -- no --> skip[deploy skipped, run green]
@@ -27,13 +27,19 @@ flowchart LR
 | `DEPLOY_PLATFORM` | `linux/amd64` | `uname -m` on dubai is `x86_64`. |
 | `DEPLOY_ENABLED` | `true` | Deploy job runs only when set. |
 
+**Environment `production` variables** (not secrets — kept as variables so GitHub does not mask
+the words `deploy` and `22` all over the logs; moved from secrets in stage 2a)
+
+| Name | Value |
+|---|---|
+| `DEPLOY_USER` | `deploy` |
+| `DEPLOY_PORT` | `22` |
+
 **Environment `production` secrets**
 
 | Name | Value |
 |---|---|
 | `DEPLOY_HOST` | `81.85.92.119` |
-| `DEPLOY_USER` | `deploy` |
-| `DEPLOY_PORT` | `22` |
 | `DEPLOY_SSH_KEY` | private half of the ed25519 key dedicated to this repo (public half in `/home/deploy/.ssh/authorized_keys`, comment `finance-tracker-deploy`) |
 | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan -t ed25519 81.85.92.119`, verified against the fingerprint already in the owner's `~/.ssh/known_hosts` |
 
@@ -44,11 +50,29 @@ The GHCR token is the workflow's temporary `GITHUB_TOKEN`, passed to `deploy.sh`
 
 | Path | Notes |
 |---|---|
-| `.env` | secrets, mode 600; keys as in `.env.example` (`DOMAIN=finance.fomin-vladimir.ru`) |
+| `.env` | secrets, mode 600; keys as in `.env.example` (`DOMAIN=finance.fomin-vladimir.ru`; bot API: `BOT_API_TOKEN_SHA256`, `BOT_API_USERNAME`, `BOT_API_ALLOWED_NETWORKS=172.20.0.0/16`) |
 | `data/` | owner uid 10001: `expenses.db`, `backups/` (nightly + pre-migrate) |
 | `backups/` | manual snapshots (migration, password rotation) |
 | `docker-compose.prod.yml`, `deploy.sh` | copied by every deploy |
 | `.last_successful_tag`, `.previous_successful_tag` | written by `deploy.sh` |
+
+## Bot API (stage 2a)
+- The bot reaches the backend as `http://finance-backend:8000` on `vav-internal`
+  (`172.20.0.0/16`); contract: [`API_BOT.md`](API_BOT.md), decision: ADR-0004.
+- The tracker's `.env` holds only the token's SHA-256; the token is in `/opt/momentum/.env`
+  (`FINANCE_API_URL`, `FINANCE_API_TOKEN`). Issue / rotate: `docs/MANUAL_STEPS.ru.md`.
+- Changing `BOT_API_*` needs a backend restart:
+  `cd /opt/finance-tracker && IMAGE_TAG=$(cat .last_successful_tag) docker compose -p finance-tracker -f docker-compose.prod.yml up -d --force-recreate backend`.
+- `scripts/e2e_bot_api.sh <backend-image> <web-image>` runs the whole boundary check against
+  throwaway containers (CI does it for every push).
+
+## Rehearse migrations on a copy of production (before merging a schema change)
+Build the new backend image **on the server** (`git archive HEAD backend | ssh dubai "tar -x -C
+/tmp/src"`, `docker build`), copy the live DB with the backup API
+(`docker exec finance-tracker-backend-1 sqlite3 /data/expenses.db ".backup /tmp/x.db"` +
+`docker cp`), then in a `--network none` container of the new image: row counts → `alembic
+upgrade head` → `PRAGMA integrity_check` + row counts again. Delete the copy, the source and the
+image afterwards. Production data never leaves the server. Log of the stage 2a run: DEVLOG.
 
 ## Roll back a release
 1. GitHub → Actions → **Deploy** → *Run workflow* → `image_tag` = previous tag
