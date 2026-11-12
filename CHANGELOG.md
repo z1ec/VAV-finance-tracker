@@ -3,6 +3,46 @@
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [1.2.0] — 2026-11-12
+
+### Added
+- **API for the Momentum bot** (`docs/API_BOT.md`, `docs/openapi.json`): service token
+  `Authorization: Bearer` (only its SHA-256 in `BOT_API_TOKEN_SHA256`), accepted only from
+  `BOT_API_ALLOWED_NETWORKS` (the `vav-internal` subnet) and without proxy headers, endpoint
+  allowlist (everything else → 403), acts as `BOT_API_USERNAME`; failed tokens share the login
+  rate limit and are never logged.
+- `Idempotency-Key` (UUID) on `POST /api/expenses` and on paying a subscription charge: replay →
+  200 with the same record, same key with other content → 409; required for the bot.
+- `expenses.source` (`web | telegram | subscription`): in the API, the CSV export and as a
+  🤖 / 🔁 icon next to the expense on the site.
+- **Subscriptions and recurring payments**: fixed amounts are recorded automatically (daily at
+  06:00 Europe/Budapest and on start, catching up missed dates), variable amounts wait for the
+  bot or the site to enter the amount; `anchor_day` keeps the 31st / 29 February.
+  API: list, create, update, deactivate, upcoming, monthly summary, pay, skip.
+- Site: page **«Подписки»** (list, add/edit, «Ждут суммы», total per month) and the dashboard
+  block **«Ближайшие списания (7 дней)»** with the monthly subscriptions total.
+- `scripts/export_openapi.py`; CI fails when `docs/openapi.json` is stale.
+- `scripts/e2e_bot_api.sh`: throwaway-container e2e of the bot boundary, including an
+  experiment that shows what Caddy forwards; runs in CI.
+- Startup guard validates the bot settings (hash format, user, private networks only).
+- Migration `0002` (back-fills `source = web`); ADR 0004–0007.
+
+### Changed
+- **Bare dates are local days in Europe/Budapest** for every filter and stat (list, export,
+  summary, by-category, by-currency, top, by-month, budget); "this month" is the local month.
+  Previously these were UTC days, so expenses between 00:00 and 01:00/02:00 local time fell
+  into the previous day or month.
+- `occurred_at` is stored normalised to UTC; the bot must send an offset (422 otherwise).
+- Caddy answers 403 to any request with an `Authorization` header; uvicorn runs with
+  `--no-proxy-headers`.
+- The site's forms send an `Idempotency-Key` (no duplicate on a double click).
+- Deploy workflow: `DEPLOY_USER` / `DEPLOY_PORT` are environment variables, not secrets (readable
+  deploy logs).
+- Invalid date query parameters answer 422 instead of 500.
+
+### Fixed
+- Date-time input near the October DST switch (e.g. 25 Oct 01:30) was saved one hour late.
+
 ## [1.1.0] — 2026-11-12
 
 ### Added

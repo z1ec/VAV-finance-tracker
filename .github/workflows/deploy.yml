@@ -136,10 +136,10 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Copy compose file and deploy script
+      - name: Copy compose file and server scripts
         run: |
           scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" -o StrictHostKeyChecking=yes \
-            deploy/docker-compose.prod.yml deploy/deploy.sh \
+            deploy/docker-compose.prod.yml deploy/deploy.sh deploy/bot-token.sh \
             "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/"
 
       - name: Deploy ${{ env.IMAGE_TAG }} (health check + automatic rollback)
@@ -148,7 +148,7 @@ jobs:
         run: |
           printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
             -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            "chmod +x $DEPLOY_DIR/deploy.sh && $DEPLOY_DIR/deploy.sh '$IMAGE_TAG' '$IMAGE_PREFIX' '${{ github.actor }}'"
+            "chmod +x $DEPLOY_DIR/deploy.sh $DEPLOY_DIR/bot-token.sh && $DEPLOY_DIR/deploy.sh '$IMAGE_TAG' '$IMAGE_PREFIX' '${{ github.actor }}'"
 
       - name: Remove SSH key
         if: always()

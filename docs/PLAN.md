@@ -21,12 +21,27 @@ Roadmap: five stages. Briefs live in `docs/briefs/`.
 - [x] `bootstrap-src` and override removed (backups and volumes kept)
 - [ ] Owner: collect new passwords and delete the file; remove the old stack on ru-tracker after 2026-11-26
 
-## Stage 2a — API for the bot and subscriptions
-_Placeholder: brief to come (`docs/briefs/`)._ Backend reachable from the bot as
-`http://finance-backend:8000` on `vav-internal`; service-to-service auth; subscription model.
+## Stage 2a — API for the bot, subscriptions, time zones (2026-11-12)
+Brief: `docs/briefs/2026-11-12-stage2a-bot-api.md`.
+- [x] Bot token: sha256 + compare_digest, `BOT_API_*` settings, startup validation
+- [x] Token only from `BOT_API_ALLOWED_NETWORKS` without proxy headers; Caddy 403 on `Authorization`; experiment in ADR-0004
+- [x] Endpoint allowlist + permission matrix test (every route × admin / user / token / anonymous)
+- [x] `Idempotency-Key` (replay, 409, parallel), `expenses.client_request_id`
+- [x] `expenses.source` (API, CSV, icons on the site)
+- [x] Local-day boundaries (Europe/Budapest) everywhere, DST tests; frontend DST fix
+- [x] Subscriptions + charges: model, migration 0002, job 06:00 local + on start, API, page, dashboard block
+- [x] `docs/API_BOT.md`, `docs/openapi.json` + export script + CI check, ADR 0004–0007
+- [x] e2e script (throwaway containers) in CI
+- [x] Migration rehearsal on a copy of prod on the server (integrity ok, counts equal)
+- [ ] PR → CI → merge → Deploy success
+- [ ] Token issued on the server (hash → tracker `.env`, token → bot `.env`), tracker restarted
+- [ ] §8.3 checks from a temp container on `vav-internal`; public domain → 403; bot healthy
+- [ ] Stage 1 tails: `DEPLOY_USER`/`DEPLOY_PORT` → variables; `finance-bootstrap` volumes/image removed
+- [ ] Owner: nothing required (token rotation procedure in `MANUAL_STEPS.ru.md`)
 
 ## Stage 2b — bot integration
-_Placeholder._
+_Placeholder._ The bot joins `vav-internal`, reads `FINANCE_API_URL` / `FINANCE_API_TOKEN` and
+follows `docs/API_BOT.md` (+ `docs/openapi.json`).
 
 ## Stage 3a — widgets
 _Placeholder._

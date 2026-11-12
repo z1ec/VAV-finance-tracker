@@ -208,3 +208,105 @@ owner note in `MANUAL_STEPS.ru.md`.
       delete the file.
 - [ ] Owner: from 2026-11-26 remove the old stack and backups on ru-tracker (`MANUAL_STEPS.ru.md`).
 - [ ] Optional: purge public DNS caches; remove the bootstrap Caddy volumes/image later.
+
+---
+
+## 2026-11-12 — Stage 2a: API for the bot, subscriptions, time zones
+
+**Goal** (brief `docs/briefs/2026-11-12-stage2a-bot-api.md`): give the Momentum bot everything
+it needs from the tracker — token auth that works only inside the server, idempotent writes,
+expense source, correct local days, subscriptions — plus the bot contract (`docs/API_BOT.md`,
+`docs/openapi.json`), and close the stage 1 tails. No AI in the tracker.
+
+### Code (branch `feat/stage2a-bot-api`)
+- **Auth** (`deps.py`, `auth.py`, `config.py`, `security.py`): `Authorization: Bearer` → sha256 →
+  `compare_digest` with `BOT_API_TOKEN_SHA256`; only from `BOT_API_ALLOWED_NETWORKS` and without
+  `X-Forwarded-For`/`Forwarded`/`X-Real-IP`; acts as `BOT_API_USERNAME` (must be admin); failures
+  → 401 + login rate limiter, logged without the token. App-wide `token_guard` with
+  `TOKEN_ALLOWED_ROUTES` (403 elsewhere). New dependencies `get_actor`, `get_reader`,
+  `require_writer`; `get_current_user` stays cookie-only. Startup guard validates the bot settings.
+  `web/Caddyfile`: 403 for any `Authorization` header (first handler in a `route`). Backend CMD
+  `--no-proxy-headers`.
+- **Idempotency** (`expense_service.py`): `Idempotency-Key` UUID, `client_request_id` (unique
+  index) + `client_request_hash`; replay 200, other content 409; race resolved by the unique
+  index; pay uses a conditional update.
+- **Source**: `expenses.source` in API, CSV, 🤖/🔁 icons.
+- **Time zones** (`timeutil.py`, `filters.py`, `stats.py`): bare dates = local days, local month,
+  `occurred_at` normalised to UTC, token requires an offset, invalid dates → 422.
+- **Subscriptions** (`models.py`, `subscriptions.py`, `routers/subscriptions.py`, `scheduler.py`,
+  `main.py`): two tables (migration `0002`), `advance()` with `anchor_day`, job 06:00
+  Europe/Budapest + on start + after create/update, API (list/create/update/deactivate/upcoming/
+  summary/pay/skip).
+- **Frontend**: `subscriptions.html` + `js/subscriptions.js`, dashboard block «Ближайшие списания
+  (7 дней)» + monthly total, source icons, `Idempotency-Key` on the add/pay forms; nav tab
+  «Подписки». **Bug fix** in `budapestInputToIso` (DST, see problems).
+- **Tooling**: `scripts/export_openapi.py` → `docs/openapi.json` (+ `tests/test_openapi.py`),
+  `scripts/e2e_bot_api.sh` (+ client and echo upstream) in CI, `deploy/bot-token.sh` (issue/rotate
+  the token without printing it; copied to the server by Deploy) + tests, ruff for `scripts/`,
+  shellcheck for `scripts/*.sh`. Version 1.2.0.
+- Tests 51 → 182: permission matrix (every route × admin/user/token/anonymous + completeness and
+  allowlist equality), network/proxy-header rules, rate limit, token never logged; idempotency
+  incl. parallel requests; local-day bounds incl. DST days, "yesterday" on 25 Oct, "this month"
+  at 00:45 on the 1st, Node test of the browser conversion in three device time zones;
+  subscription dates (31st, 29 Feb, yearly, weekly ×2, interval 3), catch-up, reruns without
+  duplicates, rate failure retry, API; migration 0001→0002 with data, downgrade, model/migration
+  drift; bot settings validation; bot-token script. Coverage 68 % → 89 %.
+- Local results: `ruff check` ✓, `ruff format --check` ✓, `mypy` ✓ (46 files), `pytest` 182 passed,
+  `actionlint` ✓, `shellcheck deploy/*.sh scripts/*.sh` ✓, `scripts/e2e_bot_api.sh` (local
+  Docker) all 33 checks PASS.
+
+### Caddy experiment (ADR-0004)
+`scripts/e2e_bot_api.sh` with the real web image (Caddy v2.11.9) in front of an echo upstream:
+Caddy sets `X-Forwarded-For` to the client address on every request and **replaces** a
+client-supplied value (fake address, empty, list); every `Authorization` variant (Bearer/bearer/
+Basic/bare/empty, any header-name case) → 403, static pages included. Real backend: token from the
+internal network 200; + `X-Forwarded-For` 401; directly from the proxy's network 401; through
+Caddy 403; `POST /api/rates/refresh` 403; idempotency replay/409/6 parallel requests → one row;
+the token is absent from the backend log.
+
+### Server and GitHub actions (dubai, times UTC)
+- ≈13:15 read-only recon: `vav-internal` = `172.20.0.0/16` (only `finance-tracker-backend-1`
+  attached; the bot joins in 2b); tracker `.env` key names (no `BOT_*` yet), `/opt/momentum/.env`
+  has no `FINANCE_*` keys yet, both 600 `deploy:deploy`; all 87 `expenses.occurred_at` end in
+  `+00:00` (so UTC normalisation needs no data migration); SQLite 3.46.1 in the backend image.
+- 13:40 **migration rehearsal on a copy of production** (brief §8.1): `git archive HEAD backend`
+  streamed to `/tmp/ft-stage2a-src`, image `finance-tracker-backend:stage2a-migtest` built on the
+  server; `docker exec finance-tracker-backend-1 sqlite3 /data/expenses.db ".backup …"` →
+  `docker cp` → `/tmp/ft-migtest/expenses.db` (13:41:17); container of the new image with
+  `--network none`: counts users 3 / categories 11 / expenses 87 / exchange_rates 116 /
+  budgets 1 / settings 0, `alembic upgrade head` 0001 → 0002, `integrity_check ok`,
+  `foreign_key_check` empty, counts **identical**, `source` = `web` × 87, both new tables
+  present. Copy, source dir and test image deleted; production still at 0001 with 87 rows.
+  Production data never left the server.
+- 13:45 GitHub, environment `production`: variables `DEPLOY_USER=deploy`, `DEPLOY_PORT=22` set,
+  secrets `DEPLOY_USER`, `DEPLOY_PORT` deleted (remaining secrets: `DEPLOY_HOST`,
+  `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`); `deploy.yml` reads `vars.*`.
+- 13:46 removed the stage 1 bootstrap leftovers after proving they were unused: volumes
+  `finance-bootstrap_caddy_data`, `finance-bootstrap_caddy_config` (label
+  `com.docker.compose.project=finance-bootstrap`, `docker ps -a --filter volume=…` empty) and image
+  `finance-bootstrap-backend:latest` (`sha256:fb66599a…`, no container by ancestor or image id).
+  Remaining volumes: `finance-tracker_caddy_{data,config}` (in use by `finance-tracker-web-1`).
+  `caddy:2-alpine` (base image, unused) left in place — not part of the brief's list.
+
+### Decisions
+- The token allowlist is enforced by one app-wide dependency on the matched route, so new
+  routes are closed by default; the matrix test fails for unclassified routes.
+- A rejected token on a route outside the allowlist gets 403 without validating the token (no
+  oracle, and the brief's "everything else with a token → 403").
+- `client_request_hash` column next to `client_request_id`: a key reused with different content
+  must be detectable even after the expense was edited.
+- Subscriptions are charged right after create/update when due (otherwise a subscription due
+  today would wait until 06:00 tomorrow); re-activation skips dates missed while inactive.
+- Paying a charge from the site records `source = subscription`; from the token `telegram`.
+- Variable subscriptions require `amount = null` (no "estimate") to keep the contract unambiguous.
+- `deploy/bot-token.sh` instead of an ad-hoc one-liner: tested, reused for rotation.
+
+### Problems
+- The Node test of the frontend found a real bug: `budapestInputToIso` took the UTC offset at the
+  guessed instant, so 25 Oct 01:30 (still CEST) became 02:30. Fixed with a second offset pass.
+- mypy saw `tests/conftest.py` under two module names once tests imported from it →
+  `tests/__init__.py`.
+- e2e: the web container needed the network alias `web`.
+
+### Open items
+- [ ] PR → CI → merge → Deploy, token issuance, §8.3 checks (next section).
