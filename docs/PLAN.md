@@ -15,9 +15,11 @@ Roadmap: five stages. Briefs live in `docs/briefs/`.
 - [x] `deploy/docker-compose.prod.yml`, `deploy.sh` (+ dry-run tests), `vav-internal`
 - [x] CI (`ci.yml`) and CD (`deploy.yml`) workflows; PR CI green
 - [x] Docs: CLAUDE.md, DEVLOG, PLAN, ARCHITECTURE, DEPLOYMENT, ADR 0001–0003, CHANGELOG, README, MANUAL_STEPS.ru
-- [ ] Dedicated CD key for `deploy@dubai` + `production` secrets + `DEPLOY_PLATFORM` (blocked: owner permission)
-- [ ] Switch bootstrap → CD (backup, `down`, `DEPLOY_ENABLED=true`, merge, verify), remove `bootstrap-src`
-- [ ] New passwords active in the DB (owner)
+- [x] Dedicated CD key for `deploy@dubai` + `production` secrets + `DEPLOY_PLATFORM`
+- [x] Switch bootstrap → CD (`down`, backup, `DEPLOY_ENABLED=true`, merge, Deploy success, §7 checks) — downtime 3 min 40 s
+- [x] `python -m app.manage set-password`; new ADMIN/USER1 passwords active in the DB
+- [x] `bootstrap-src` and override removed (backups and volumes kept)
+- [ ] Owner: collect new passwords and delete the file; remove the old stack on ru-tracker after 2026-11-26
 
 ## Stage 2a — API for the bot and subscriptions
 _Placeholder: brief to come (`docs/briefs/`)._ Backend reachable from the bot as

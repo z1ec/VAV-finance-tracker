@@ -131,8 +131,8 @@ owner note in `MANUAL_STEPS.ru.md`.
 - `deploy/docker-compose.prod.yml`, `deploy/deploy.sh` (two services, web check via `--resolve`,
   rollback, current + previous tag, `vav-internal`), dry-run tests (12).
 - `.github/workflows/ci.yml`, `deploy.yml`.
-- Tests: 18 → 46 (secrets guard, migration backup, health version, deploy script). Coverage ~67 %.
-- Local results: `ruff check` ✓, `ruff format --check` ✓, `mypy` ✓ (31 files), `pytest` 46 passed,
+- Tests: 18 → 51 (secrets guard, migration backup, health version, manage command, deploy script).
+- Local results: `ruff check` ✓, `ruff format --check` ✓, `mypy` ✓ (34 files), `pytest` 51 passed,
   `actionlint` ✓, `shellcheck deploy/*.sh` ✓. CI on PR #1: all jobs green.
 
 ### Server preparation for CD (dubai)
@@ -142,18 +142,69 @@ owner note in `MANUAL_STEPS.ru.md`.
   `backups/pre-password-rotation-20261112T113256Z.db`; new `ADMIN_PASSWORD` and `USER1_PASSWORD`
   (24 chars, `secrets.token_urlsafe`) generated **on the server** and written to `.env`;
   credentials in `/root/finance-tracker-new-passwords.txt` (600, root).
-- 11:33 updating the two users' password hashes in the database was **denied by the session's
-  permission policy** → the DB still has the old hashes: the old passwords keep working, the new
-  ones are not active yet. Owner step with the exact command: `MANUAL_STEPS.ru.md`.
+- 11:33 a first attempt to update the two users' password hashes in the database (inline script)
+  was denied by the session's permission policy; the owner then explicitly allowed it, asking for
+  a proper management command instead of ad-hoc code → `app/manage.py` (below).
 - 11:34 `docker network create vav-internal`; `chown deploy:deploy /opt/finance-tracker
   /opt/finance-tracker/.env /opt/finance-tracker/backups`.
-- 11:35 installing the dedicated CD public key into `/home/deploy/.ssh/authorized_keys` was
-  **denied by the session's permission policy**; no key pair was generated, nothing installed.
-  Without it the GitHub `production` secrets cannot be configured and the switch to CD (§7) is
-  blocked → owner decision in `MANUAL_STEPS.ru.md`.
+- 11:35 installing the CD key was denied by the permission policy; the owner granted it
+  explicitly (persistent access for GitHub Actions to `deploy@dubai` is intended).
+- 12:18 `backend/app/manage.py`: `python -m app.manage set-password --from-env ADMIN USER1` or
+  `--username NAME` (password on stdin); 12-char/default policy, atomic, never prints secrets;
+  5 tests. Merged with PR #1.
+- 12:20 new ed25519 key pair `finance-tracker-deploy` (SHA256:CvCg0JD7…sluM) generated in a temp dir
+  on the workstation; public half appended to `/home/deploy/.ssh/authorized_keys`
+  (`momentum-deploy` untouched). Host key from `ssh-keyscan -t ed25519` =
+  `SHA256:g45pBY6Fb5yMeGcv4PQkGELdRtdLTdyZYtfQ6Ey1b5Y`, identical to `~/.ssh/known_hosts`.
+  Login as `deploy` with the new key verified.
+- 12:20 GitHub: environment `production` created; secrets `DEPLOY_HOST`, `DEPLOY_USER`,
+  `DEPLOY_PORT`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` set via stdin; variable
+  `DEPLOY_PLATFORM=linux/amd64`. Local private key, public key and known_hosts copy deleted.
+
+### Switch from the bootstrap stack to CD (§7) — times UTC
+- PR #1 checks on `ba164bb`: all green (lint · typecheck · tests, actionlint · shellcheck ·
+  deploy.sh dry run, docker build + smoke test).
+- **12:21:57** `docker compose -p finance-bootstrap … down` (no `-v`; volumes
+  `finance-bootstrap_caddy_*` kept). Writes stopped first, then the backup:
+  `backups/pre-cd-switch-20261112.db`, integrity ok, sha256 `9bd47d7f…beb6e0`, counts
+  users 3 / categories 11 / expenses 87 / exchange_rates 116 / budgets 1 / settings 0.
+- `chown -R 10001:10001 /opt/finance-tracker/data`.
+- `DEPLOY_ENABLED=true`; PR #1 merged → `main` `22e0d1c`; Deploy run `43217278831`:
+  CI → build & push `sha-22e0d1c` → deploy. `deploy.sh`: logged in to GHCR, started at 12:25:12,
+  "backend healthy and https://finance.fomin-vladimir.ru/api/health ok after 15s" at **12:25:37**,
+  `.last_successful_tag=sha-22e0d1c`, logged out (no GHCR auth left in `~deploy/.docker/config.json`).
+- **Switch downtime: 3 min 40 s** (12:21:57 → 12:25:37), dominated by CI + image build after the
+  merge. Total downtime of stage 1: 50 s + 3 min 40 s.
+- Verification (§7.5):
+  - `curl https://finance.fomin-vladimir.ru/api/health` (resolved via public DNS / from the server) →
+    `{"status":"ok","db":"ok","version":"1.1.0","git_sha":"22e0d1c",…}`;
+  - `https://…:8443/dashboard.html?x=1` → **301** `https://finance.fomin-vladimir.ru/dashboard.html?x=1`;
+    `http://…/login.html` → 308 to HTTPS; `login.html` → **200**; no `alt-svc` (HTTP/3 off);
+  - row counts unchanged (3 / 11 / 87 / 116 / 1 / 0), integrity ok;
+  - backend runs as `tracker` (uid 10001), networks `finance-tracker_default` and `vav-internal`
+    (aliases include `finance-backend`), no published port;
+  - `momentum-bot-1` **healthy**; foreign site `fomin-vladimir.ru` / `www` → **200** (baseline 200).
+- 12:27 backup `backups/pre-set-password-20261112.db` (integrity ok, same counts), then
+  `docker exec finance-tracker-backend-1 python -m app.manage set-password --from-env ADMIN USER1`
+  → both users updated; login with the new passwords → 200 for both (checked on the server,
+  only status codes printed).
+- 12:27 removed `/opt/finance-tracker/bootstrap-src` (code + override only). Bootstrap Caddy
+  volumes and the `finance-bootstrap-backend` image were left in place.
+
+### Problems & notes
+- **Log masking:** GitHub masks secret values everywhere in logs; `DEPLOY_USER=deploy` and
+  `DEPLOY_PORT=22` turn "deploying sha-22e0d1c" into "***ing sha-***e0d1c". Harmless; moving these
+  two non-secret values to environment variables would fix it (left as brief §6 requires secrets).
+- Two test assertions initially checked that "short" did not leak — but the error text says
+  "shorter". Unique canary values are used instead (also in the CI smoke test).
+- `data/backups/` does not exist yet; the backend creates it at the first nightly backup (03:00 UTC)
+  or before the next migration.
+- Clients whose resolvers cached the old A record (TTL 86400) still reach the stopped old server
+  (nginx 502) until the cache expires — seen from the dev machine's ISP resolver and one
+  Cloudflare PoP at 12:26.
 
 ### Open items
-- [ ] Owner: allow (or perform) the CD key installation, then: secrets/variables, switch from the
-      bootstrap stack to CD (§7), remove `bootstrap-src` + override.
-- [ ] Owner: activate the new passwords in the DB.
-- [ ] Owner: in 14 days remove the old stack and backups on ru-tracker.
+- [ ] Owner: take the new passwords from `/root/finance-tracker-new-passwords.txt`, give USER1 theirs,
+      delete the file.
+- [ ] Owner: from 2026-11-26 remove the old stack and backups on ru-tracker (`MANUAL_STEPS.ru.md`).
+- [ ] Optional: purge public DNS caches; remove the bootstrap Caddy volumes/image later.
