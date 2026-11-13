@@ -347,3 +347,98 @@ the token is absent from the backend log.
       (contract: `docs/API_BOT.md`, `docs/openapi.json`).
 - [ ] Optional (owner): purge the Cloudflare DNS cache for `finance.fomin-vladimir.ru`
       (`MANUAL_STEPS.ru.md` §3 of stage 1) — 1.1.1.1 still serves the old address.
+
+## 2026-11-13/14 — Stage 3b: security audit (run 1 of 2: tracker)
+
+**Goal.** Brief `docs/briefs/2026-11-12-stage3b-security-audit.md`, sections 1–3: find and close
+real risks in the tracker, permanent security checks in CI, port the bot's deploy fixes, read-only
+review of both servers. Result: release 1.3.0, `docs/SECURITY.md`.
+
+### Baseline before any change (2026-11-13 20:41 UTC, from the workstation)
+`https://fomin-vladimir.ru/` (neighbour site on `ru-tracker`, A = `157.22.253.65`) **200**,
+`http://` **301**; pinned to `157.22.253.65` → 200. Tracker: `/api/health` ok, 1.2.0 / `58c0cea`;
+`/login.html` 200 with no security headers (`server: Caddy`, `etag`, …).
+
+### Scans
+- **gitleaks 8.30.1** (image by digest) `git --log-opts=--all`: 15 commits, 2 matches — both
+  example `Idempotency-Key` UUIDs (`docs/API_BOT.md`, `tests/test_bot_auth.py`); `.env.example` is
+  empty in all 3 revisions. Narrow allowlist in `.gitleaks.toml`; canary `ghp_…` still detected.
+- **pip-audit 2.10.1**: runtime — 26 entries / 13 unique advisories in `starlette 0.41.3` and
+  `python-multipart 0.0.20`; dev — `pytest 8.3.4` CVE-2025-71176. After the upgrade: "No known
+  vulnerabilities found" for both files.
+- **trivy 0.76.1** (fixable HIGH/CRITICAL): backend `zlib1g` CVE-2026-76844/85091; web
+  `golang.org/x/net` CVE-2026-78661 in the Caddy binary **and** two private keys (Caddy local CA,
+  created by `caddy validate` during the build). After the fixes both images exit 0 (x/net
+  accepted until 2026-12-15, issue #7).
+
+### Done (code)
+- Dependencies: FastAPI 0.141.1 (latest of a two-month quiet period; 0.14x+ — `_IncludedRouter`),
+  Starlette 1.10.0, full lock via `uv pip compile --exclude-newer 2026-10-30`; `python-multipart`,
+  `pytest-asyncio` removed; pytest 9.1.1.
+- **The FastAPI upgrade broke the token guard (failing closed)**: `scope["route"].path` lost the
+  router prefix, so every token request got 403 (53 failing tests). The guard now matches the
+  request path against regexes built from `TOKEN_ALLOWED_ROUTES` (no framework internals);
+  the matrix test enumerates routes from the OpenAPI schema.
+- `GET /api/stats/by-category` allowed for the token (+ matrix, API_BOT.md §4.6a, openapi.json).
+- XSS (icon/colour/date, quotes in `escapeHtml`, login error), CSV formulas, input bounds,
+  64 KB body limit (Caddy + ASGI middleware with a direct 413), `origin_guard`, cookie flags on
+  logout, limiter memory cap, docs off in production, `umask 077` + 700/600 on the data dir.
+- Caddy headers + `skip_install_trust` + `caddy fmt`; inline scripts → `js/theme-init.js`,
+  `js/login.js`. Dockerfiles: `apt-get upgrade`, CA keys removed in the validate layer.
+- Compose hardening (read-only, `cap_drop`, `no-new-privileges`).
+- `deploy.sh`: pull timeout/retries (bot PR #8) + pre-deploy backup/restore (bot stage 3a +
+  fix 6903e37: every DB operation inside a container) + rotation; `deploy.yml` 30 min, actor via
+  env. 13 new dry-run tests.
+- CI `security` job, weekly schedule, SHA pins, `persist-credentials: false`, Dependabot.
+- Tests 182 → 304 (+2 that need coreutils `timeout`, run in CI and verified in a
+  `python:3.12-slim` container: 24/24 deploy tests passed). e2e 33 → 44 checks.
+
+### Local verification
+- Hardened prod compose with the new images on Docker Desktop: backend `healthy`, CapEff 0,
+  read-only root; web CapEff `0x400` (`NET_BIND_SERVICE`); headers present; cross-site write 403;
+  100 KB body 413; `Authorization` through Caddy 403; backup inside the read-only container ok.
+- Headless Chrome (DevTools Protocol) on all pages after login, with a malicious legacy category
+  icon and an OCR-like comment inserted straight into the DB: no CSP violations or JS errors,
+  charts render, payloads shown as text, `window.__xss` unset, 0 injected `<img>`.
+- Permissions on a 755/644 bind mount → 700/600 after start (`data_permissions_restricted`).
+
+### Server actions (read-only; times UTC, 2026-11-13)
+- 20:41 workstation: baseline above.
+- 23:18–23:25 `dubai`: `ss -tlnup`, `ufw status verbose`, `iptables -S` (INPUT, DOCKER,
+  DOCKER-BRIDGE/CT/FORWARD/INTERNAL, nat DOCKER), `sshd -T`, `cat sshd_config.d/*`, `passwd -S`,
+  `journalctl -u ssh` (counts only), `ls -la`/`stat` of `/opt/finance-tracker` (no `.env`
+  content), `ssh-keygen -lf` of `authorized_keys` (fingerprints only), `docker ps`, `docker
+  inspect --format` (user, caps, read-only, ports, networks — never `Env`), `docker network
+  inspect vav-internal`, `apt list --upgradable` (count), certificate via `openssl s_client`.
+  Findings S-1…S-6 in `SECURITY.md`; the key one: `PasswordAuthentication yes` effective
+  (`50-cloud-init.conf` wins over `99-momentum.conf`), 34 139 failed attempts in 7 days.
+- 23:20 `ru-tracker`: `ss -tlnup`, `ufw status verbose`, `iptables -S INPUT`, `sshd -T`,
+  `docker ps -a`, `ls -la` of the old tracker backups, `ssh-keygen -lf` of root's keys. Nothing
+  touched (nginx, firewall, sshd, containers).
+- 23:22 workstation → `https://finance.fomin-vladimir.ru` (pinned to `81.85.92.119`): `/docs`,
+  `/redoc`, `/openapi.json` → the SPA page (no Swagger), `/api/docs`, `/api/openapi.json` → 404.
+
+### GitHub actions
+- Label `security` created; issues #5 (session revocation), #6 (non-root Caddy), #7 (Caddy
+  x/net CVE). Found (read-only): `main` unprotected, environment `production` without a branch
+  policy, private vulnerability reporting off → G-1, owner commands in MANUAL_STEPS 3b.7.
+
+### Decisions
+- Scanners run as Docker images pinned by digest, not through third-party actions (trivy-action
+  tags were hijacked in 2026); versions at least two weeks old (trivy 0.76.1, not 0.76.2).
+- FastAPI 0.141.1 instead of the newest 0.162.x: 0.143–0.162 were released within ten days in
+  October (large routing refactor); upgrade later through Dependabot with the matrix test as guard.
+- CSRF: an Origin/Sec-Fetch-Site check rather than tokens — all writes are JSON + `SameSite=Lax`
+  already; the check only closes the sibling-subdomain gap.
+- HSTS 180 days without `includeSubDomains`/preload: the apex and other subdomains are not ours to
+  pin; `:8443` is HTTPS too, so nothing breaks.
+- The app fixes its own file modes on start instead of a manual `chmod` on the server.
+- Server and GitHub-settings findings are recommendations with exact commands — nothing was
+  changed outside the repository (brief §0.4).
+
+### Problems
+- FastAPI routing change (above). zsh does not word-split `$VAR` commands — used functions.
+- gitleaks ignores values containing `EXAMPLE`, so the first canary was not detected — a
+  realistic `ghp_` token was.
+- `mkdir(mode=…)` in a test was affected by the `umask 077` that the app's lifespan sets for the
+  whole test process — the test sets modes explicitly.

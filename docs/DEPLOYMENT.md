@@ -8,13 +8,13 @@ shared with the Momentum bot (`/opt/momentum`). Decisions: ADR-0002, ADR-0003.
 
 ```mermaid
 flowchart LR
-    pr[PR / push to any branch] --> ci["CI<br/>ruff · mypy · pytest+cov (incl. openapi.json check)<br/>actionlint · shellcheck · deploy.sh dry run<br/>build both images + smoke + e2e bot API"]
+    pr[PR / push to any branch, weekly] --> ci["CI<br/>ruff · mypy · pytest+cov (incl. openapi.json check)<br/>actionlint · shellcheck · deploy.sh dry run<br/>build both images + smoke + e2e bot API<br/>security: gitleaks · pip-audit · trivy"]
     main[push to main] --> ci2[CI] --> build["build & push<br/>ghcr.io/z1ec/finance-tracker-backend:sha-xxxxxxx<br/>ghcr.io/z1ec/finance-tracker-web:sha-xxxxxxx<br/>(+ latest)"]
     build --> gate{"vars.DEPLOY_ENABLED<br/>== 'true'?"}
     gate -- no --> skip[deploy skipped, run green]
-    gate -- yes --> ssh["SSH as deploy@dubai<br/>scp compose + deploy.sh"] --> dep["deploy.sh sha-xxxxxxx<br/>pull → up → wait healthy<br/>+ https health via 127.0.0.1"]
-    dep -- ok --> rec[".last_successful_tag<br/>prune old images"]
-    dep -- fail --> rb["roll back both services<br/>to the last good tag, job fails"]
+    gate -- yes --> ssh["SSH as deploy@dubai<br/>scp compose + deploy.sh"] --> dep["deploy.sh sha-xxxxxxx<br/>pull (480 s × 3) → pre-deploy DB backup<br/>→ up → wait healthy<br/>+ https health via 127.0.0.1"]
+    dep -- ok --> rec[".last_successful_tag<br/>prune old images and pre-deploy backups"]
+    dep -- fail --> rb["restore the DB if the revision changed,<br/>roll back both services<br/>to the last good tag, job fails"]
     manual["workflow_dispatch<br/>image_tag=sha-yyyyyyy"] --> gate
 ```
 
@@ -79,9 +79,25 @@ image afterwards. Production data never leaves the server. Log of the stage 2a r
    (`cat /opt/finance-tracker/.previous_successful_tag` on the server, or the package list in GHCR).
 2. The run skips CI/build, deploys that tag with the same health check.
 
-`deploy.sh` already rolls back automatically when a new tag fails its health check.
-Database migrations are not reversed automatically — restore the `pre-migrate-*.db` backup if a
-release changed the schema (see below).
+`deploy.sh` already rolls back automatically when a new tag fails its health check, including
+the database (since 1.3.0):
+
+- **Image pull**: each attempt runs under `timeout ${PULL_TIMEOUT:-480}` s, `PULL_ATTEMPTS=3`; a
+  pull that never finishes fails the deploy before anything is changed. The deploy job has 30 min.
+- **Pre-deploy backup**: after the pull, the *running* backend copies the database with the
+  SQLite backup API into `data/backups/pre-deploy-<tag>-<UTC>.db` (`quick_check`, mode 600) and
+  reports the Alembic revision. A failed backup stops the deploy. The newest
+  `PRE_DEPLOY_KEEP=10` are kept after a successful deploy.
+- **Failed new tag**: the backend is stopped; if the Alembic revision changed, the migrated
+  database (`expenses.db`, `-wal`, `-shm`) is renamed to `expenses.db.failed-<tag>…`, the backup
+  is copied back and only then the previous tag starts. Writes made between the backup and the
+  failure (≤ the health-check time) are only in the `failed-` copy.
+- All of this runs **inside a backend container** (`docker exec`, or `docker compose run` of the
+  previous image when nothing runs) as uid 10001: `data/` is private to that user (700).
+
+If the log says `restore of data/backups/… failed; <previous> was not started`: nothing was
+deleted. Restore by hand (next section) from that `pre-deploy-*.db`, then run Deploy with the
+previous `image_tag`.
 
 ## Manual deploy without CI
 On the server as `deploy` (images must exist in GHCR; for private packages log in first with a
@@ -106,7 +122,7 @@ sudo python3 -c "import sqlite3,sys; s=sqlite3.connect('data/expenses.db'); d=sq
   "backups/before-restore-$(date -u +%Y%m%dT%H%M%SZ).db"     # keep the current state
 sudo cp data/backups/expenses-2026-11-20.db data/expenses.db   # the backup to restore
 sudo rm -f data/expenses.db-wal data/expenses.db-shm          # stale WAL of the replaced file
-sudo chown 10001:10001 data/expenses.db
+sudo chown 10001:10001 data/expenses.db && sudo chmod 600 data/expenses.db
 IMAGE_TAG="$(cat .last_successful_tag)" docker compose -p finance-tracker -f docker-compose.prod.yml start backend
 curl -s https://finance.fomin-vladimir.ru/api/health
 ```

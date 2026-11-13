@@ -1,5 +1,132 @@
 # Ручные шаги владельца
 
+## Этап 3b — аудит безопасности (2026-11-14)
+
+**Срочных действий нет.** Трекер 1.3.0 выкатился сам; пользователей не разлогинивало, сайт
+работает как раньше. Полный отчёт с находками — `docs/SECURITY.md`. Ниже то, что можно сделать
+только вам: настройки серверов и GitHub (агент на серверах ничего не менял). Порядок — по
+важности. Перед любыми изменениями `sshd` **держите открытой вторую SSH-сессию**, пока не
+убедитесь, что новый вход работает.
+
+### 3b.1 `dubai`: выключить вход по паролю и X11 (S-1, S-2) — рекомендуется
+Сейчас вход по паролю фактически **включён**: файл `50-cloud-init.conf` (`PasswordAuthentication
+yes`) читается раньше `99-momentum.conf` (`no`), а sshd берёт первое значение. За неделю — 34 139
+попыток подбора, успешных нет (паролей для входа ни у кого нет, root только по ключу), но
+закрыть стоит. Файл с префиксом `00-` прочитается первым:
+```bash
+ssh dubai 'printf "PasswordAuthentication no\nKbdInteractiveAuthentication no\nX11Forwarding no\n" > /etc/ssh/sshd_config.d/00-hardening.conf && sshd -t && systemctl reload ssh && sshd -T | grep -E "^(passwordauthentication|x11forwarding|permitrootlogin) "'
+```
+Ожидается: `passwordauthentication no`, `x11forwarding no`, `permitrootlogin prohibit-password`.
+Затем **в новом окне** проверьте вход: `ssh dubai true && echo ok`. Откат: `rm
+/etc/ssh/sshd_config.d/00-hardening.conf && systemctl reload ssh`. fail2ban после этого не нужен.
+
+### 3b.2 `dubai`: удалить пользователя `tmpuser` (S-3) — по желанию
+Остался от провайдера: пароль заблокирован, ключей нет, процессов нет. Проверка и удаление:
+```bash
+ssh dubai 'ps -u tmpuser --no-headers | wc -l; crontab -l -u tmpuser 2>&1 | head -1'   # ожидается 0 и "no crontab"
+ssh dubai 'userdel -r tmpuser && id tmpuser 2>&1'                                       # "no such user"
+```
+
+### 3b.3 `dubai`: ограничить CI-ключи у `deploy` (S-4) — по желанию
+Опция `restrict` запрещает ключам проброс портов, агента, X11 и терминал; деплой (scp + команда)
+продолжает работать. Ограничить ключи по IP нельзя: у GitHub Actions тысячи меняющихся
+адресов. Ключи CI есть только у `deploy`, у root их нет — проверено.
+```bash
+ssh dubai 'cp -p /home/deploy/.ssh/authorized_keys /root/deploy-authorized_keys.bak && sed -i -E "/^ssh-/ s/^/restrict /" /home/deploy/.ssh/authorized_keys && ssh-keygen -lf /home/deploy/.ssh/authorized_keys && cut -c1-30 /home/deploy/.ssh/authorized_keys'
+```
+После этого перезапустите Deploy обоих проектов (Actions → Deploy → Run workflow с текущим
+`image_tag`) и убедитесь, что они зелёные. Откат: `cp -p /root/deploy-authorized_keys.bak
+/home/deploy/.ssh/authorized_keys`.
+
+### 3b.4 `dubai`: обновить пакеты (S-5) — в удобное время
+Автообновления ставят только security-обновления; ждут 150 пакетов. Займёт пару минут, сайт и
+бот не останавливаются (если не нужна перезагрузка):
+```bash
+ssh dubai 'apt-get update && apt-get -y upgrade && ls /var/run/reboot-required 2>/dev/null || echo "reboot not required"'
+```
+Если перезагрузка нужна — `ssh dubai reboot`, через минуту проверить
+`curl -s https://finance.fomin-vladimir.ru/api/health` и `ssh dubai docker ps` (оба стека
+поднимаются сами, `restart: unless-stopped`).
+
+### 3b.5 `dubai`: убрать остатки этапа 1 (S-6) — после 2026-11-26
+В `/opt/finance-tracker/backups/` лежат копия старого `.env` (до ротации паролей) и копии базы
+от 12 ноября. Свежие бэкапы делает само приложение (`data/backups/`). Когда убедитесь, что они
+есть (`ssh dubai ls /opt/finance-tracker/data/backups` — нужны `expenses-…db` за последние дни):
+```bash
+ssh dubai 'rm -f /opt/finance-tracker/backups/env-before-rotation-* && rm -rf /opt/finance-tracker/backups && ls /opt/finance-tracker'
+```
+
+### 3b.6 `ru-tracker` (S-7) — вместе с удалением старого стека (этап 1, §4)
+Не трогают nginx, соседний сайт и VPN (`9443/udp`):
+```bash
+# после удаления стека трекера: порт 8443 больше никто не слушает
+ssh ru-tracker 'ss -tln | grep -c ":8443 " ; ufw delete allow 8443/tcp && ufw status | grep -c 8443'   # 0, затем 0
+# X11 не нужен
+ssh ru-tracker 'printf "X11Forwarding no\n" > /etc/ssh/sshd_config.d/00-hardening.conf && sshd -t && systemctl reload ssh && sshd -T | grep x11forwarding'
+curl -s -o /dev/null -w "%{http_code}\n" https://fomin-vladimir.ru/        # сайт соседа: 200
+```
+Ядро `5.15.0-73` давно не обновлялось; `apt-get upgrade` + перезагрузка остановят соседний сайт и
+VPN на 1–2 минуты — решайте сами, когда это удобно.
+
+### 3b.7 GitHub: защита `main`, окружение `production`, приватные отчёты (G-1) — рекомендуется
+Сейчас правило «только через PR с зелёным CI» держится на договорённости. Команды (выполнять
+локально, `gh` авторизован под вами):
+```bash
+R=z1ec/VAV-finance-tracker
+# main: только через PR, обязательные проверки CI, без force-push и удаления
+gh api -X PUT repos/$R/branches/main/protection --input - <<'JSON'
+{"required_status_checks": {"strict": false, "contexts": ["lint · typecheck · tests", "actionlint · shellcheck · deploy.sh dry run", "docker build + smoke test (no push)", "security · gitleaks · pip-audit · trivy"]},
+ "enforce_admins": false, "required_pull_request_reviews": null, "restrictions": null,
+ "allow_force_pushes": false, "allow_deletions": false}
+JSON
+# секреты production — только для запусков из main
+gh api -X PUT repos/$R/environments/production --input - <<'JSON'
+{"deployment_branch_policy": {"protected_branches": true, "custom_branch_policies": false}}
+JSON
+# приватные сообщения об уязвимостях (вкладка Security)
+gh api -X PUT repos/$R/private-vulnerability-reporting
+```
+`enforce_admins: false` оставляет вам возможность срочно смержить в обход проверок.
+
+### Ротация секретов — когда и как
+Делать при подозрении на утечку или раз в год. Значения нигде не печатаются.
+
+| Секрет | Где живёт | Как сменить | Последствия |
+|---|---|---|---|
+| Токен бота для трекера | хэш — `/opt/finance-tracker/.env`, токен — `/opt/momentum/.env` (`FINANCE_API_TOKEN`) | раздел «Как перевыпустить токен» ниже (этап 2a), затем перезапуск бота по его инструкции | бот 1–2 минуты получает 401 |
+| `SECRET_KEY` трекера | `/opt/finance-tracker/.env` | команда ниже | **все пользователи разлогинятся**, нужно войти заново |
+| Пароли пользователей сайта | база (bcrypt) | `ssh dubai docker exec -i finance-tracker-backend-1 python -m app.manage set-password --username <имя>` (пароль — в stdin, этап 1 §2) | старые сессии живут до 30 дней — для немедленного выхода сменить и `SECRET_KEY` |
+| Деплой-ключ трекера | GitHub `production` → `DEPLOY_SSH_KEY`; публичный — у `deploy` на `dubai` | команды ниже | на время замены деплой не запускать |
+| Деплой-ключ бота, токен Telegram (`TELEGRAM_BOT_TOKEN`), ключ Gemini (`GEMINI_API_KEY`) | GitHub бота / `/opt/momentum/.env` | по `docs/MANUAL_STEPS.ru.md` репозитория бота: Telegram — `/revoke` у @BotFather, Gemini — новый ключ в Google AI Studio, старый удалить | бот перезапускается |
+| `GITHUB_TOKEN` (GHCR) | выдаётся GitHub на каждый запуск | не нужно | — |
+
+`SECRET_KEY` (генерируется на сервере, не выводится):
+```bash
+ssh dubai 'cd /opt/finance-tracker && k=$(openssl rand -hex 32) && sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$k/" .env && unset k && IMAGE_TAG=$(cat .last_successful_tag) docker compose -p finance-tracker -f docker-compose.prod.yml up -d --force-recreate --no-deps backend && sleep 15 && curl -s https://finance.fomin-vladimir.ru/api/health'
+```
+
+Деплой-ключ трекера (старый ключ с комментарием `finance-tracker-deploy` удаляется только после
+успешного деплоя новым):
+```bash
+ssh-keygen -t ed25519 -N "" -C finance-tracker-deploy-$(date +%Y%m) -f ~/.ssh/ft_deploy_new
+ssh dubai 'cat >> /home/deploy/.ssh/authorized_keys' < ~/.ssh/ft_deploy_new.pub
+gh secret set DEPLOY_SSH_KEY --env production --repo z1ec/VAV-finance-tracker < ~/.ssh/ft_deploy_new
+# Actions → Deploy → Run workflow, image_tag = $(ssh dubai cat /opt/finance-tracker/.last_successful_tag) → success
+ssh dubai "sed -i '/ finance-tracker-deploy\$/d' /home/deploy/.ssh/authorized_keys && ssh-keygen -lf /home/deploy/.ssh/authorized_keys"
+rm -P ~/.ssh/ft_deploy_new ~/.ssh/ft_deploy_new.pub
+```
+
+### Что изменилось для вас в 1.3.0
+- Изменяющие запросы с чужих сайтов отклоняются (403); с самого сайта всё работает как раньше.
+- В иконке категории теперь можно указать только эмодзи/символ, без HTML.
+- В выгрузке CSV значения, похожие на формулы Excel (`=…`, `+…`, `-…`, `@…`), начинаются с `'`.
+- Деплой: перед запуском новой версии делается бэкап базы `data/backups/pre-deploy-*.db`
+  (хранятся 10); если новая версия с миграцией не поднялась — база восстанавливается сама,
+  неудачная копия остаётся как `expenses.db.failed-<тег>`.
+- Права на базу и бэкапы на сервере сузились до владельца контейнера (700/600).
+
+---
+
 ## Этап 2a — API для бота и подписки (2026-11-12)
 
 **Обязательных действий нет.** Трекер версии 1.2.0 умеет принимать операции от бота Momentum,

@@ -3,6 +3,51 @@
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [1.3.0] — 2026-11-14
+
+Security audit (stage 3b). Details and evidence: `docs/SECURITY.md`.
+
+### Security
+- Dependencies: FastAPI 0.115.6 → 0.141.1, Starlette 0.41.3 → 1.10.0 (13 advisories in
+  Starlette and `python-multipart`); `python-multipart` removed (unused). Full lock of transitive
+  dependencies (`backend/requirements.in` → `requirements.txt`). Dev: pytest 9.1.1
+  (CVE-2025-71176), unused `pytest-asyncio` removed.
+- XSS: category `icon` rejects markup (422) and is escaped everywhere; `escapeHtml` now escapes
+  quotes; manual rate `date` must be `YYYY-MM-DD`; the login error is set as text.
+- CSV export: cells starting with `= + - @`, tab or CR get a `'` prefix (formula injection).
+- Caddy: Content-Security-Policy (`script-src 'self'`; inline scripts moved to
+  `js/theme-init.js` and `js/login.js`), `frame-ancestors 'none'`, `X-Frame-Options`,
+  `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS (180 days, this host only),
+  no `Server` header, 64 KB request body limit (413).
+- Backend: 64 KB body limit for direct calls too; writes refused when `Sec-Fetch-Site` is
+  cross-site/same-site or `Origin` is another host (CSRF defence in depth); amount, rate and
+  budget upper bounds (no more 500 on `1e400`); logout clears the cookie with the same flags;
+  login limiter memory bounded; FastAPI docs off outside `localhost`; database and backups
+  700/600 (`umask 077`, fixed on start).
+- Bot token: the allowlist is matched on the request path (FastAPI 0.14x no longer exposes the
+  prefixed route template); behaviour unchanged, covered by the permission matrix.
+- Images: backend runtime `apt-get upgrade` (zlib CVEs); the web image no longer contains
+  Caddy's local CA keys created by `caddy validate`; `skip_install_trust`.
+- Compose: both containers `no-new-privileges`, `cap_drop: ALL` (web: `NET_BIND_SERVICE`),
+  read-only root FS with a `/tmp` tmpfs.
+- CI: new job `security` (gitleaks over the full history, pip-audit, trivy on both images, image
+  history), weekly schedule; all third-party actions pinned by SHA; `persist-credentials:
+  false`; Dependabot for pip, Actions and Docker; `.gitignore` covers `.env.*`.
+
+### Added
+- `GET /api/stats/by-category` is allowed for the bot token (one request instead of one
+  `summary` per category; read-only, same data).
+- `docs/SECURITY.md` (threat model, findings, accepted risks, reporting).
+
+### Changed
+- `deploy.sh`: image pull under `timeout` (480 s) with 3 attempts (from the bot's PR #8); the
+  running backend backs the database up before a new tag starts (`pre-deploy-*.db`, keep 10);
+  if the new tag fails after changing the Alembic revision, the backup is restored before the
+  rollback (the migrated copy is kept). Deploy job limit 15 → 30 min; the registry user reaches
+  the shell through `env`.
+- e2e: security headers, `Host` pass-through, 413 from Caddy, `by-category` with the token,
+  forged `X-Forwarded-For` through Caddy.
+
 ## [1.2.0] — 2026-11-12
 
 ### Added

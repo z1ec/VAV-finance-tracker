@@ -46,5 +46,21 @@ follows `docs/API_BOT.md` (+ `docs/openapi.json`).
 ## Stage 3a — widgets
 _Placeholder._
 
-## Stage 3b — security audit
-_Placeholder._
+## Stage 3b — security audit (2026-11-13/14)
+Brief: `docs/briefs/2026-11-12-stage3b-security-audit.md` (run 1 of 2: tracker; run 2: bot).
+Results: `docs/SECURITY.md`.
+- [x] Scans: gitleaks (full history), pip-audit (runtime + dev), trivy (both images)
+- [x] Dependencies: FastAPI 0.141.1 / Starlette 1.10.0, `python-multipart` and `pytest-asyncio` removed, full lock (`requirements.in` → `requirements.txt`), pytest 9.1.1
+- [x] Token allowlist matched on the request path (FastAPI 0.14x routing change); `GET /api/stats/by-category` allowed for the token (+ matrix, API_BOT.md, openapi.json)
+- [x] XSS: `icon` validated on the server, every API value escaped (`escapeHtml` with quotes), no inline scripts
+- [x] CSV formula injection, input bounds, 64 KB body limit (Caddy + app), Origin/Sec-Fetch-Site check
+- [x] Caddy security headers (CSP, frame-ancestors, HSTS, …), checked in headless Chrome and e2e
+- [x] Cookies on logout, limiter memory bound, docs off in production, data/backups 700/600
+- [x] Images: `apt-get upgrade`, no CA keys in the web image; compose hardening (read-only, cap_drop, no-new-privileges)
+- [x] `deploy.sh`: pull timeout × 3 (bot PR #8), pre-deploy backup + restore after a failed migration (bot stage 3a); job limit 30 min; dry-run tests
+- [x] CI job `security`, Dependabot, actions pinned by SHA, `persist-credentials: false`, weekly run
+- [x] Read-only review of `dubai` and `ru-tracker`; recommendations and secret rotation in `MANUAL_STEPS.ru.md`
+- [x] Issues #5 (session revocation), #6 (non-root Caddy), #7 (Caddy x/net CVE)
+- [x] PR → CI → merge → Deploy success, production checks
+- [ ] Owner: MANUAL_STEPS 3b.1–3b.7 (SSH password auth, `tmpuser`, key `restrict`, updates, leftovers, `ru-tracker`, GitHub protection)
+- [ ] Run 2 in the bot repository (switch `/money` to `by-category`, section 5 cross-checks)
