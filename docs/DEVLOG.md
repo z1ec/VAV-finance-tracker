@@ -442,3 +442,43 @@ review of both servers. Result: release 1.3.0, `docs/SECURITY.md`.
   realistic `ghp_` token was.
 - `mkdir(mode=…)` in a test was affected by the `umask 077` that the app's lifespan sets for the
   whole test process — the test sets modes explicitly.
+
+### Release and production checks (times UTC, 2026-11-13)
+- PR #8: all CI jobs green twice (push + pull_request), incl. **security** — gitleaks "17 commits
+  scanned … no leaks found", pip-audit "No known vulnerabilities found" (runtime and dev), trivy
+  0 for `debian 13.7`, `alpine 3.24.4`, `usr/bin/caddy`, "no secrets in image history";
+  deploy dry-run 24 passed (incl. `test_stalled_pull_is_retried`,
+  `test_pull_that_never_finishes_fails_fast`); e2e "all e2e checks passed".
+- Merged → `main` `53d2298`. Deploy run `43528101564` **success**. `deploy.sh`:
+  23:37:15 pull attempt 1/3 — the backend image **stalled exactly like the bot's stage 2b
+  incident**; `timeout` killed it after 480 s; 23:45:25 attempt 2/3 pulled both images in 15 s;
+  23:45:40 pre-deploy backup `pre-deploy-sha-53d2298-20261113T234540Z.db` (revision 0002) by the
+  running 1.2.0 backend; 23:45:41 start; 23:45:50 healthy + public health ok; old images pruned
+  (kept `sha-53d2298`, `sha-58c0cea`).
+- 23:46 workstation: `/api/health` → `1.3.0` / `53d2298`; `/login.html` with CSP,
+  `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP, HSTS, no
+  `Server`; pages and new JS 200; `:8443` → 301; cross-site login → 403. Neighbour site
+  `https://fomin-vladimir.ru/` **200**, `http://` **301**, pinned to `ru-tracker` 200 — same as
+  the baseline.
+- 23:47 `dubai` (read-only): backend `ro=true capdrop=[ALL] no-new-privileges` healthy; web
+  `ro=true capdrop=[ALL] capadd=[NET_BIND_SERVICE] no-new-privileges`; `data/`, `data/backups/`
+  700, all files 600 (`data_permissions_restricted changed=5`); listening still only 22, 80, 443,
+  8443; `momentum-bot-1` healthy, not restarted (up since 20:33).
+- 23:47 token checks (permission 4; throwaway `curlimages/curl:8.11.1` containers, token from
+  `/opt/momentum/.env` via `--env-file` and curl `-H @-`, only status codes printed):
+  `vav-internal` + token: `by-category` **200**, `categories` 200, `budget` 200; no token 401;
+  token + `X-Forwarded-For` 401; `POST /api/rates/refresh` 403. Public domain (from the default
+  bridge, pinned to `81.85.92.119`): token **403**, token + forged `X-Forwarded-For 172.20.0.3`
+  **403**, token + `X-Real-IP 127.0.0.1` 403. Default bridge → `172.20.0.2:8000`: no connection
+  (isolation). Token occurrences in the backend log: 0.
+- The `X-Forwarded-For: 172.20.0.3` check counted one failed attempt against the bot's address
+  (expired after 15 min; 5 are needed for a lockout) → finding T-23, issue #13.
+- Dependabot opened PRs #9–#12 right after the merge (config works); not merged in this stage.
+- Nothing was changed on either server by hand; the only changes on `dubai` are the ones the
+  release itself made (containers, file modes of the tracker's own data, the pre-deploy backup).
+
+### Open items
+- [ ] Owner: `MANUAL_STEPS.ru.md` 3b.1–3b.7 (S-1 SSH password auth first; G-1 GitHub protection).
+- [ ] Issues #5, #6, #7 (expires 2026-12-15), #13.
+- [ ] Dependabot PRs #9–#12: review (python 3.15, bcrypt 5 vs passlib).
+- [ ] Stage 3b run 2 in the bot repository (`/money` → `by-category`, section 5).
