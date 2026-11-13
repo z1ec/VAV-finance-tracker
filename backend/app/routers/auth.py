@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -42,17 +44,21 @@ def login(
         key=settings.session_cookie_name,
         value=token,
         max_age=settings.session_max_age_days * 86400,
-        httponly=True,
-        samesite="lax",
-        secure=settings.domain != "localhost",
-        path="/",
+        **_cookie_flags(),
     )
     return user
 
 
+def _cookie_flags() -> dict[str, Any]:
+    """HttpOnly, SameSite=Lax, Secure on a real domain; shared by login and logout."""
+    return {"httponly": True, "samesite": "lax", "secure": not settings.is_local, "path": "/"}
+
+
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(settings.session_cookie_name, path="/")
+    # Same flags as on login, so the browser matches and drops the cookie. The signed token
+    # itself stays valid until it expires (stateless sessions, see docs/SECURITY.md).
+    response.delete_cookie(settings.session_cookie_name, **_cookie_flags())
     return {"detail": "ok"}
 
 

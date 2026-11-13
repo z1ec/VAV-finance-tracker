@@ -7,16 +7,36 @@
 #   service token works only inside the Docker network vav-internal, never through this proxy.
 #   reverse_proxy also always sets X-Forwarded-For (client-sent values are replaced, no
 #   trusted_proxies), which the backend uses as a second check.
-
 {
+	# Containers have no system trust store to install Caddy's local CA into (read-only root).
+	skip_install_trust
 	servers {
 		# Only TCP ports are published/allowed in the firewall: do not advertise HTTP/3.
 		protocols h1 h2
 	}
 }
 
+(security_headers) {
+	header {
+		# Scripts and styles only from this origin (Chart.js is vendored, no inline <script>);
+		# 'unsafe-inline' for styles: style="" attributes in the markup and Chart.js canvases.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		# HSTS for this host only: no includeSubDomains (fomin-vladimir.ru and its other
+		# subdomains are not ours to pin), no preload. Ignored by browsers on plain-HTTP localhost.
+		# :8443 is HTTPS too (redirect site below), so pinning the host to HTTPS breaks nothing.
+		Strict-Transport-Security "max-age=15552000"
+		-Server
+	}
+}
+
 (app) {
 	encode gzip
+	import security_headers
 
 	# `route` keeps the order exactly as written: the Authorization check runs first.
 	route {
@@ -24,6 +44,11 @@
 		respond @authorization "Forbidden" 403
 
 		handle /api/* {
+			# The largest legitimate body is a few KB of JSON; anything bigger is refused (413)
+			# before it reaches the backend.
+			request_body {
+				max_size 64KB
+			}
 			reverse_proxy backend:8000
 		}
 
@@ -40,6 +65,7 @@
 }
 
 {$DOMAIN:localhost}:8443 {
+	import security_headers
 	redir https://{host}{uri} permanent
 }
 

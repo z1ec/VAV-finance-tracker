@@ -4,7 +4,6 @@ import logging
 import re
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import app.main as main_module
@@ -41,7 +40,7 @@ EXPECTED: dict[tuple[str, str], str] = {
     ("POST", "/api/rates"): ADMIN,
     ("POST", "/api/rates/refresh"): ADMIN,
     ("GET", "/api/stats/summary"): READ_TOKEN,
-    ("GET", "/api/stats/by-category"): READ,
+    ("GET", "/api/stats/by-category"): READ_TOKEN,
     ("GET", "/api/stats/by-month"): READ,
     ("GET", "/api/stats/by-currency"): READ,
     ("GET", "/api/stats/top"): READ,
@@ -70,12 +69,10 @@ OUTCOME: dict[str, dict[str, str | int]] = {
 
 
 def _app_routes() -> set[tuple[str, str]]:
-    found: set[tuple[str, str]] = set()
-    for route in main_module.app.routes:
-        if isinstance(route, APIRoute):
-            for method in route.methods:
-                found.add((method, route.path))
-    return found
+    """Every (method, full path) the app serves, from the generated schema (FastAPI ≥ 0.140 no
+    longer exposes included routes in ``app.routes``; no route here is excluded from it)."""
+    schema = main_module.app.openapi()
+    return {(method.upper(), path) for path, ops in schema["paths"].items() for method in ops}
 
 
 def test_every_route_is_classified() -> None:

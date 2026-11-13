@@ -3,7 +3,7 @@
   "info": {
     "title": "Expense Tracker",
     "description": "Multi-currency expense tracker (HUF/EUR/RUB, base HUF). Browser clients use the session cookie; the Momentum bot uses a service token from the internal Docker network only — see docs/API_BOT.md. Bare `YYYY-MM-DD` dates are local days in Europe/Budapest.",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "paths": {
     "/api/auth/login": {
@@ -1018,6 +1018,7 @@
           "stats"
         ],
         "summary": "By Category",
+        "description": "Spending per category for the period (default: current local month). Bot token: allowed\n(stage 3b) — the same data the bot already reads via ``summary?category_id=…``.",
         "operationId": "by_category_api_stats_by_category_get",
         "parameters": [
           {
@@ -1897,6 +1898,7 @@
           },
           "limit_huf": {
             "type": "number",
+            "maximum": 100000000000.0,
             "minimum": 0.0,
             "title": "Limit Huf"
           }
@@ -2028,6 +2030,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 100000000000.0,
                 "minimum": 0.0
               },
               {
@@ -2041,6 +2044,7 @@
               "$ref": "#/components/schemas/BudgetCategoryIn"
             },
             "type": "array",
+            "maxItems": 500,
             "title": "Categories"
           }
         },
@@ -2243,7 +2247,9 @@
           "sort_order": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "maximum": 1000000.0,
+                "minimum": -1000000.0
               },
               {
                 "type": "null"
@@ -2352,6 +2358,7 @@
         "properties": {
           "amount": {
             "type": "number",
+            "maximum": 1000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Amount"
           },
@@ -2406,6 +2413,7 @@
         "properties": {
           "amount": {
             "type": "number",
+            "maximum": 1000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Amount"
           },
@@ -2450,6 +2458,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 1000000.0,
                 "exclusiveMinimum": 0.0
               },
               {
@@ -2592,6 +2601,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 1000000000.0,
                 "exclusiveMinimum": 0.0
               },
               {
@@ -2655,6 +2665,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 1000000.0,
                 "exclusiveMinimum": 0.0
               },
               {
@@ -2702,6 +2713,7 @@
         "properties": {
           "date": {
             "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "title": "Date"
           },
           "currency": {
@@ -2715,6 +2727,7 @@
           },
           "rate_to_huf": {
             "type": "number",
+            "maximum": 1000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Rate To Huf"
           }
@@ -2776,6 +2789,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 1000000000.0,
                 "exclusiveMinimum": 0.0
               },
               {
@@ -3098,6 +3112,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 1000000000.0,
                 "exclusiveMinimum": 0.0
               },
               {
@@ -3502,6 +3517,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

@@ -20,6 +20,17 @@ from typing import Any
 
 TOKEN = os.environ.get("E2E_TOKEN", "")
 results: list[str] = []
+last_headers: dict[str, str] = {}
+
+# Stage 3b: what web/Caddyfile must add to every response (values checked loosely).
+SECURITY_HEADERS = {
+    "content-security-policy": "frame-ancestors 'none'",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "permissions-policy": "camera=()",
+    "strict-transport-security": "max-age=",
+}
 
 
 def request(
@@ -45,6 +56,8 @@ def request(
     resp = conn.getresponse()
     raw = resp.read()
     conn.close()
+    last_headers.clear()
+    last_headers.update({k.lower(): v for k, v in resp.getheaders()})
     try:
         return resp.status, json.loads(raw) if raw else None
     except ValueError:
@@ -57,6 +70,16 @@ def check(name: str, ok: bool, detail: object = "") -> None:
 
 def bearer() -> list[tuple[str, str]]:
     return [("Authorization", f"Bearer {TOKEN}")]
+
+
+def check_security_headers(what: str) -> None:
+    missing = {
+        name: last_headers.get(name)
+        for name, needle in SECURITY_HEADERS.items()
+        if needle not in last_headers.get(name, "")
+    }
+    check(f"security headers on {what}", not missing, missing)
+    check(f"no Server header on {what}", "server" not in last_headers, last_headers.get("server"))
 
 
 def own_ip() -> str:
@@ -91,6 +114,16 @@ def caddy_echo() -> None:
     status, _ = request("web", "GET", "/", [*local, ("Authorization", "Bearer x")])
     check("Caddy refuses Authorization on static pages too", status == 403, status)
 
+    status, body = request("web", "GET", "/api/anything", local)
+    host = body["headers"].get("host") if isinstance(body, dict) else None
+    check("Caddy passes Host unchanged (the backend's Origin check)", host == "localhost", host)
+    check_security_headers("a proxied /api response")
+    status, _ = request("web", "GET", "/login.html", local)
+    check("login page → 200", status == 200, status)
+    check_security_headers("/login.html")
+    status, body = request("web", "POST", "/api/x", local, {"pad": "x" * 70_000})
+    check("70 KB body → 413 from Caddy (upstream never called)", status == 413, (status, body))
+
 
 def bot() -> None:
     api = "finance-backend"
@@ -101,7 +134,12 @@ def bot() -> None:
     status, cats = call("GET", "/api/categories")
     check("token: GET /api/categories → 200", status == 200, status)
     category_id = cats[0]["id"]
-    for path in ("/api/stats/budget", "/api/subscriptions/upcoming", "/api/health"):
+    for path in (
+        "/api/stats/budget",
+        "/api/stats/by-category",
+        "/api/subscriptions/upcoming",
+        "/api/health",
+    ):
         status, _ = call("GET", path)
         check(f"token: GET {path} → 200", status == 200, status)
     status, _ = request(api, "GET", "/api/categories", port=8000)
@@ -194,6 +232,14 @@ def outside() -> None:
     check("token straight to the backend from the proxy network → 401", status == 401, status)
     status, _ = request("web", "GET", "/api/categories", [("Host", "localhost"), *bearer()])
     check("token through Caddy → 403", status == 403, status)
+    for forged in ("172.20.0.5", own_ip(), "127.0.0.1"):
+        status, _ = request(
+            "web",
+            "GET",
+            "/api/stats/by-category",
+            [("Host", "localhost"), ("X-Forwarded-For", forged), *bearer()],
+        )
+        check(f"token + forged X-Forwarded-For {forged} through Caddy → 403", status == 403, status)
     status, _ = request("web", "GET", "/api/health", [("Host", "localhost")])
     check("health through Caddy without token → 200", status == 200, status)
 

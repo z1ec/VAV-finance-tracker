@@ -15,8 +15,8 @@ function renderCategoriesList() {
       (c) => `
     <div class="flex-between" style="padding: 8px 0; border-bottom: 1px solid var(--border)">
       <span class="category-chip">
-        <span class="category-dot" style="background:${c.color}"></span>
-        ${c.icon || ""} ${escapeHtml(c.name)}
+        <span class="category-dot" style="background:${escapeHtml(c.color)}"></span>
+        ${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}
         ${c.is_archived ? '<span class="badge archived">архив</span>' : ""}
       </span>
       <div class="row-actions">
@@ -69,7 +69,7 @@ async function loadBudgets() {
       (c) => `
     <div class="field-row" style="align-items: center">
       <div class="field mb-0" style="flex: 1 1 auto; min-width: 160px">
-        <span class="category-chip"><span class="category-dot" style="background:${c.color}"></span>${c.icon || ""} ${escapeHtml(c.name)}</span>
+        <span class="category-chip"><span class="category-dot" style="background:${escapeHtml(c.color)}"></span>${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}</span>
       </div>
       <div class="field mb-0" style="flex: 0 0 140px">
         <input type="number" min="0" step="1" data-category-budget="${c.id}" value="${limitsByCategory[c.id] ?? ""}" placeholder="Не задан" />
@@ -87,7 +87,7 @@ async function loadRates() {
       <div class="flex-between" style="padding: 6px 0"><span>HUF</span><span>1</span></div>
       <div class="flex-between" style="padding: 6px 0"><span>EUR</span><span>${rates.EUR ? rates.EUR.toFixed(4) : "—"}</span></div>
       <div class="flex-between" style="padding: 6px 0"><span>RUB</span><span>${rates.RUB ? rates.RUB.toFixed(4) : "—"}</span></div>
-      <div class="text-muted" style="font-size: 12px; margin-top: 6px">Актуально на ${rates.date}</div>
+      <div class="text-muted" style="font-size: 12px; margin-top: 6px">Актуально на ${escapeHtml(rates.date)}</div>
     `;
   } catch (err) {
     el.innerHTML = `<div class="alert alert-danger">Не удалось загрузить курсы</div>`;
@@ -108,7 +108,7 @@ async function loadTrash() {
       <div class="flex-between" style="padding: 8px 0; border-bottom: 1px solid var(--border)">
         <span>
           <strong>${formatAmount(Number(e.amount), e.currency)}</strong>
-          <span class="text-muted" style="margin-left: 6px">${e.category.icon || ""} ${escapeHtml(e.category.name)} · ${formatDateTime(e.occurred_at)}</span>
+          <span class="text-muted" style="margin-left: 6px">${escapeHtml(e.category.icon || "")} ${escapeHtml(e.category.name)} · ${formatDateTime(e.occurred_at)}</span>
         </span>
         <button class="btn btn-ghost btn-sm" data-action="restore" data-id="${e.id}">Восстановить</button>
       </div>`

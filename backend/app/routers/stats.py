@@ -105,8 +105,10 @@ def summary(
 def by_category(
     filters: StatsFilters = Depends(stats_filters),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    actor: Actor = Depends(get_reader),
 ):
+    """Spending per category for the period (default: current local month). Bot token: allowed
+    (stage 3b) — the same data the bot already reads via ``summary?category_id=…``."""
     start, end = _period_bounds(filters.date_from, filters.date_to)
     query = filtered_expenses_query(start, end, filters.category_id, filters.currency, None)
     subq = query.subquery()

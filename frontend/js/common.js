@@ -221,10 +221,15 @@ export function sourceBadge(source) {
   return `<span class="source-icon" title="${badge.title}" aria-label="${badge.title}">${badge.icon}</span>`;
 }
 
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+/**
+ * Escape text for HTML element content AND quoted attribute values (quotes included).
+ * Every value from the API (names, comments, icons, colors…) goes through it before innerHTML:
+ * comments may come from the bot's receipt OCR, i.e. untrusted text.
+ */
 export function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str ?? "";
-  return div.innerHTML;
+  return String(str ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
 }
 
 export function renderHeader(user, activePage) {
@@ -324,7 +329,7 @@ export function initCategoryFilter({ panelEl, summaryEl, categories, selected, o
           (c) => `
         <label class="cat-option">
           <input type="checkbox" value="${c.id}" ${selected.includes(c.id) ? "checked" : ""} />
-          <span class="category-dot" style="background:${c.color}"></span>${c.icon || ""} ${escapeHtml(c.name)}
+          <span class="category-dot" style="background:${escapeHtml(c.color)}"></span>${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}
         </label>`
         )
         .join("") +

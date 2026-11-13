@@ -64,15 +64,33 @@ def is_bot_network(host: str | None) -> bool:
 
 # ---------- Login brute-force protection (in-memory, per-IP) ----------
 
+# One process, one replica (SQLite): the limiter lives in memory and is reset by a restart,
+# which an attacker cannot trigger. Behind Caddy the key is the client address from
+# X-Forwarded-For (Caddy overwrites any client-supplied value), see deps.get_client_ip.
 _login_attempts: dict[str, list[float]] = defaultdict(list)
+# Hard cap on tracked addresses so a flood of distinct IPs cannot grow memory without bound.
+MAX_TRACKED_IPS = 10_000
 
 
 def _prune(ip: str) -> list[float]:
     now = time.time()
     window = settings.login_window_minutes * 60
-    attempts = [t for t in _login_attempts[ip] if now - t < window]
-    _login_attempts[ip] = attempts
+    attempts = [t for t in _login_attempts.get(ip, ()) if now - t < window]
+    if attempts:
+        _login_attempts[ip] = attempts
+    else:
+        _login_attempts.pop(ip, None)  # no empty entries left behind
     return attempts
+
+
+def _evict_expired() -> None:
+    now = time.time()
+    window = settings.login_window_minutes * 60
+    for key in [k for k, v in _login_attempts.items() if not v or now - v[-1] >= window]:
+        del _login_attempts[key]
+    while len(_login_attempts) >= MAX_TRACKED_IPS:  # still full: drop the oldest activity
+        oldest = min(_login_attempts, key=lambda k: _login_attempts[k][-1])
+        del _login_attempts[oldest]
 
 
 def is_rate_limited(ip: str) -> bool:
@@ -80,8 +98,10 @@ def is_rate_limited(ip: str) -> bool:
 
 
 def record_failed_attempt(ip: str) -> None:
-    _prune(ip)
-    _login_attempts[ip].append(time.time())
+    attempts = _prune(ip)
+    if not attempts and len(_login_attempts) >= MAX_TRACKED_IPS:
+        _evict_expired()
+    _login_attempts[ip] = [*attempts, time.time()]
 
 
 def reset_attempts(ip: str) -> None:

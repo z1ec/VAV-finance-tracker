@@ -134,7 +134,7 @@ function renderBudgets(budget, rates, displayCurrency) {
       return `
       <div class="budget-row">
         <div class="budget-row__head">
-          <span class="name"><span class="category-dot" style="background:${b.category.color}"></span>${b.category.icon || ""} ${escapeHtml(b.category.name)}</span>
+          <span class="name"><span class="category-dot" style="background:${escapeHtml(b.category.color)}"></span>${escapeHtml(b.category.icon || "")} ${escapeHtml(b.category.name)}</span>
           <span class="amounts">${formatAmount(conv(b.spent_huf), displayCurrency)} / ${formatAmount(conv(b.limit_huf), displayCurrency)}</span>
         </div>
         <div class="progress-track"><div class="progress-fill ${pct > 100 ? "over" : ""}" style="width:${Math.min(pct, 100)}%"></div></div>
@@ -155,7 +155,7 @@ function renderCurrencyBreakdown(byCurrency) {
     .map(
       (c) => `
       <div class="flex-between" style="padding: 8px 0; border-bottom: 1px solid var(--border)">
-        <span>${c.currency} <span class="text-muted" style="font-size:12px">· ${c.count} операций</span></span>
+        <span>${escapeHtml(c.currency)} <span class="text-muted" style="font-size:12px">· ${c.count} операций</span></span>
         <span>
           <strong>${formatAmount(c.total_original, c.currency)}</strong>
           <span class="text-muted" style="margin-left: 8px; font-size: 12px">≈ ${formatAmount(c.total_huf, "HUF")}</span>
@@ -181,7 +181,7 @@ function renderTop(top, rates, displayCurrency) {
       return `
       <tr>
         <td data-label="Дата">${formatDateTime(e.occurred_at)}</td>
-        <td data-label="Категория"><span class="category-chip"><span class="category-dot" style="background:${e.category.color}"></span>${e.category.icon || ""} ${escapeHtml(e.category.name)}</span></td>
+        <td data-label="Категория"><span class="category-chip"><span class="category-dot" style="background:${escapeHtml(e.category.color)}"></span>${escapeHtml(e.category.icon || "")} ${escapeHtml(e.category.name)}</span></td>
         <td data-label="Комментарий" class="comment-cell">${sourceBadge(e.source)}${escapeHtml(e.comment || "")}</td>
         <td data-label="Сумма" class="amount-cell">${original}${secondary}</td>
       </tr>`;
