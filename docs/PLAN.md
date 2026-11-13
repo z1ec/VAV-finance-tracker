@@ -60,7 +60,8 @@ Results: `docs/SECURITY.md`.
 - [x] `deploy.sh`: pull timeout × 3 (bot PR #8), pre-deploy backup + restore after a failed migration (bot stage 3a); job limit 30 min; dry-run tests
 - [x] CI job `security`, Dependabot, actions pinned by SHA, `persist-credentials: false`, weekly run
 - [x] Read-only review of `dubai` and `ru-tracker`; recommendations and secret rotation in `MANUAL_STEPS.ru.md`
-- [x] Issues #5 (session revocation), #6 (non-root Caddy), #7 (Caddy x/net CVE)
+- [x] Issues #5 (session revocation), #6 (non-root Caddy), #7 (Caddy x/net CVE), #13 (limiter key for direct requests)
 - [x] PR → CI → merge → Deploy success, production checks
 - [ ] Owner: MANUAL_STEPS 3b.1–3b.7 (SSH password auth, `tmpuser`, key `restrict`, updates, leftovers, `ru-tracker`, GitHub protection)
 - [ ] Run 2 in the bot repository (switch `/money` to `by-category`, section 5 cross-checks)
+- [ ] Review Dependabot PRs #9–#12 (python 3.15 base image and bcrypt 5 are not drop-in: passlib)
