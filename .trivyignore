@@ -1,0 +1,8 @@
+# Accepted findings of the image scan (docs/SECURITY.md, "Accepted risks"). Every entry expires:
+# after the date trivy reports it again and the CI security job fails until it is re-assessed.
+
+# golang.org/x/net/html DoS, compiled into the Caddy binary of caddy:2-alpine (v2.11.9, x/net
+# v0.60.0). No Caddy release with x/net >= 0.62.0 yet (master has it). Caddy itself does not
+# import x/net/html; it comes in transitively for the `templates`/markdown handlers, which our
+# Caddyfile does not use. The web image follows caddy:2-alpine, so the next release fixes it.
+CVE-2026-78661 exp:2026-12-15

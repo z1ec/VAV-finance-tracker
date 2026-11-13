@@ -105,5 +105,6 @@ docs/               architecture, deployment, ADRs, dev log, plan, briefs
 ## Documentation
 - [CLAUDE.md](CLAUDE.md) — working agreement for AI agents: commands, module map, pitfalls
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) · [docs/adr/](docs/adr/)
+- [docs/SECURITY.md](docs/SECURITY.md) — threat model, audit findings, accepted risks, how to report a vulnerability
 - [docs/DEVLOG.md](docs/DEVLOG.md) · [docs/PLAN.md](docs/PLAN.md) · [CHANGELOG.md](CHANGELOG.md)
 - [docs/MANUAL_STEPS.ru.md](docs/MANUAL_STEPS.ru.md) — owner's checklist (Russian)

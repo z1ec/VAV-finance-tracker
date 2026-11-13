@@ -39,6 +39,17 @@ IdempotencyKey = Annotated[
 
 router = APIRouter()
 
+# A cell starting with one of these is a formula in Excel / LibreOffice / Google Sheets
+# (OWASP "CSV injection"); comments may come from the bot's receipt OCR, i.e. untrusted text.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value: object) -> object:
+    """Prefix a text cell that a spreadsheet would evaluate with ``'`` so it stays text."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
 
 @router.get("/trash", response_model=list[ExpenseOut])
 def trash(db: Session = Depends(get_db), _: User = Depends(require_admin)):
@@ -87,7 +98,8 @@ def export_csv(
     )
     for e in items:
         writer.writerow(
-            [
+            csv_safe(cell)
+            for cell in [
                 e.id,
                 e.occurred_at,
                 e.category.name,

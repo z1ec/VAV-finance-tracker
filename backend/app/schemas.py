@@ -1,7 +1,8 @@
+import unicodedata
 from datetime import UTC, date, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 Currency = Literal["HUF", "EUR", "RUB"]
 RateSource = Literal["api", "manual"]
@@ -9,6 +10,36 @@ ExpenseSource = Literal["web", "telegram", "subscription"]
 AmountType = Literal["fixed", "variable"]
 Period = Literal["weekly", "monthly", "yearly"]
 ChargeStatus = Literal["pending", "paid", "skipped"]
+
+# Input bounds (stage 3b): beyond these a value is a typo or an attack, and huge or infinite
+# floats broke the HUF conversion (500) instead of failing validation (422).
+MAX_AMOUNT = 1_000_000_000  # in any currency
+MAX_RATE_TO_HUF = 1_000_000
+MAX_BUDGET_HUF = 100_000_000_000
+MAX_SORT_ORDER = 1_000_000
+
+# HTML-significant characters: an icon is an emoji or a short symbol, never markup.
+_ICON_FORBIDDEN = set("<>&\"'`=/\\")
+
+
+def _check_icon(value: str | None) -> str | None:
+    """Server-side guard for the category icon (the frontend escapes it as well)."""
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if any(ch in _ICON_FORBIDDEN for ch in value) or any(
+        unicodedata.category(ch) == "Cc" for ch in value
+    ):
+        raise ValueError("icon: допустимы только эмодзи и символы без HTML-разметки")
+    return value
+
+
+Icon = Annotated[str | None, Field(default=None, max_length=16), AfterValidator(_check_icon)]
+Color = Annotated[str, Field(min_length=4, max_length=9, pattern=r"^#[0-9a-fA-F]{3,8}$")]
+Amount = Annotated[float, Field(gt=0, le=MAX_AMOUNT)]
+Rate = Annotated[float, Field(gt=0, le=MAX_RATE_TO_HUF)]
 
 
 # ---------- Auth ----------
@@ -32,8 +63,8 @@ class UserOut(BaseModel):
 
 class CategoryBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    color: str = Field(min_length=4, max_length=9, pattern=r"^#[0-9a-fA-F]{3,8}$")
-    icon: str | None = Field(default=None, max_length=16)
+    color: Color
+    icon: Icon = None
 
 
 class CategoryCreate(CategoryBase):
@@ -42,11 +73,9 @@ class CategoryCreate(CategoryBase):
 
 class CategoryUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    color: str | None = Field(
-        default=None, min_length=4, max_length=9, pattern=r"^#[0-9a-fA-F]{3,8}$"
-    )
-    icon: str | None = Field(default=None, max_length=16)
-    sort_order: int | None = None
+    color: Color | None = None
+    icon: Icon = None
+    sort_order: int | None = Field(default=None, ge=-MAX_SORT_ORDER, le=MAX_SORT_ORDER)
 
 
 class CategoryOut(BaseModel):
@@ -80,12 +109,12 @@ def _validate_occurred_at(v: datetime | None) -> datetime | None:
 
 
 class ExpenseCreate(BaseModel):
-    amount: float = Field(gt=0)
+    amount: Amount
     currency: Currency
     category_id: int
     occurred_at: datetime | None = None
     comment: str | None = Field(default=None, max_length=500)
-    rate_to_huf: float | None = Field(default=None, gt=0)
+    rate_to_huf: Rate | None = None
 
     @field_validator("occurred_at")
     @classmethod
@@ -94,12 +123,12 @@ class ExpenseCreate(BaseModel):
 
 
 class ExpenseUpdate(BaseModel):
-    amount: float | None = Field(default=None, gt=0)
+    amount: Amount | None = None
     currency: Currency | None = None
     category_id: int | None = None
     occurred_at: datetime | None = None
     comment: str | None = Field(default=None, max_length=500)
-    rate_to_huf: float | None = Field(default=None, gt=0)
+    rate_to_huf: Rate | None = None
 
     @field_validator("occurred_at")
     @classmethod
@@ -137,9 +166,15 @@ class ExpenseListOut(BaseModel):
 
 
 class RateManualCreate(BaseModel):
-    date: str
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     currency: Currency
-    rate_to_huf: float = Field(gt=0)
+    rate_to_huf: Rate
+
+    @field_validator("date")
+    @classmethod
+    def _check_date(cls, v: str) -> str:
+        date.fromisoformat(v)  # ValueError → 422 for 2026-02-30 and the like
+        return v
 
 
 class RateOut(BaseModel):
@@ -209,12 +244,12 @@ class BudgetsOverallStatusOut(BaseModel):
 
 class BudgetCategoryIn(BaseModel):
     category_id: int
-    limit_huf: float = Field(ge=0)
+    limit_huf: float = Field(ge=0, le=MAX_BUDGET_HUF)
 
 
 class BudgetsUpdate(BaseModel):
-    total_monthly_budget_huf: float | None = Field(default=None, ge=0)
-    categories: list[BudgetCategoryIn] = Field(default_factory=list)
+    total_monthly_budget_huf: float | None = Field(default=None, ge=0, le=MAX_BUDGET_HUF)
+    categories: list[BudgetCategoryIn] = Field(default_factory=list, max_length=500)
 
 
 class BudgetCategoryOut(BaseModel):
@@ -233,7 +268,7 @@ class BudgetsOut(BaseModel):
 class SubscriptionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     amount_type: AmountType = "fixed"
-    amount: float | None = Field(default=None, gt=0)
+    amount: Amount | None = None
     currency: Currency
     category_id: int
     period: Period = "monthly"
@@ -248,7 +283,7 @@ class SubscriptionCreate(BaseModel):
 class SubscriptionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     amount_type: AmountType | None = None
-    amount: float | None = Field(default=None, gt=0)
+    amount: Amount | None = None
     currency: Currency | None = None
     category_id: int | None = None
     period: Period | None = None
@@ -301,7 +336,7 @@ class ChargeOut(BaseModel):
 
 
 class ChargePay(BaseModel):
-    amount: float = Field(gt=0)
+    amount: Amount
     currency: Currency | None = None
     occurred_at: datetime | None = None
     comment: str | None = Field(default=None, max_length=500)

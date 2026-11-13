@@ -37,7 +37,7 @@ function renderExpenseRow(e, rates, displayCurrency, isAdmin) {
     const convertedValue = displayCurrency === "HUF" ? e.amount_huf : e.amount_huf / (rates[displayCurrency] || 1);
     secondary = `<span class="amount-secondary">${formatAmount(convertedValue, displayCurrency)}</span>`;
   }
-  const catChip = `<span class="category-chip"><span class="category-dot" style="background:${e.category.color}"></span>${e.category.icon || ""} ${escapeHtml(e.category.name)}</span>`;
+  const catChip = `<span class="category-chip"><span class="category-dot" style="background:${escapeHtml(e.category.color)}"></span>${escapeHtml(e.category.icon || "")} ${escapeHtml(e.category.name)}</span>`;
   const actions = isAdmin
     ? `<div class="row-actions">
         <button class="btn btn-ghost btn-icon btn-sm" data-action="edit" data-id="${e.id}" title="Редактировать">✏️</button>
@@ -121,7 +121,7 @@ async function loadExpenses() {
 
 function populateCategorySelect(selectEl, selectedId) {
   selectEl.innerHTML = state.categories
-    .map((c) => `<option value="${c.id}" ${c.id === selectedId ? "selected" : ""}>${c.icon || ""} ${escapeHtml(c.name)}</option>`)
+    .map((c) => `<option value="${c.id}" ${c.id === selectedId ? "selected" : ""}>${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}</option>`)
     .join("");
 }
 

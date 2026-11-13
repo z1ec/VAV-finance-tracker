@@ -7,9 +7,12 @@ ARG GIT_SHA=local
 COPY web/Caddyfile /etc/caddy/Caddyfile
 COPY frontend/ /srv/
 
-# Fail the build on a broken Caddyfile (both for local and a real domain).
+# Fail the build on a broken Caddyfile (both for local and a real domain). `validate` provisions
+# Caddy's local CA (private keys under /data/caddy): delete it in the same layer, so no image
+# layer carries a private key (trivy secret scan, stage 3b). Runtime state lives in volumes.
 RUN caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
-    && DOMAIN=finance.example.com caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+    && DOMAIN=finance.example.com caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
+    && rm -rf /data/caddy /config/caddy
 
 LABEL org.opencontainers.image.title="finance-tracker-web" \
       org.opencontainers.image.description="Multi-currency expense tracker — Caddy + static frontend" \

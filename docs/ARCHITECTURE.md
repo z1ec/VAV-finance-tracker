@@ -187,10 +187,13 @@ dates (ADR-0006).
 |---|---|---|---|
 | Nightly copy (`expenses-YYYY-MM-DD.db`) | 03:00 UTC, scheduler | `/opt/finance-tracker/data/backups/` | 14 newest |
 | Before migrations (`pre-migrate-<UTC>.db`) | on start, only if migrations are pending | `/opt/finance-tracker/data/backups/` | 10 newest |
+| Before every deploy (`pre-deploy-<tag>-<UTC>.db`) | `deploy.sh`, by the running backend | `/opt/finance-tracker/data/backups/` | 10 newest (restored automatically if a failed release migrated the DB) |
 | Migration snapshots (`pre-migration-2026-11-12.db`, …) | manual, stage 1 | `/opt/finance-tracker/backups/` | kept |
 | Old server snapshot | 2026-11-12, before the move | `ru-tracker:/usr/local/etc/finance/VAV-finance-tracker/backups/` | until the owner removes it |
 
 All copies use the SQLite online backup API, safe while the app is running (WAL included).
+`data/` and `data/backups/` are 700 and every file 600, owned by the container user (uid 10001):
+the app sets `umask 077` and fixes the modes on start (since 1.3.0).
 Restore procedure: `docs/DEPLOYMENT.md`.
 
 ## Security notes
@@ -201,4 +204,12 @@ Restore procedure: `docs/DEPLOYMENT.md`.
   proxy headers, endpoint allowlist, failures share the login rate limit, never logged
   (ADR-0004). uvicorn runs with `--no-proxy-headers`.
 - Idempotent writes for the bot (`Idempotency-Key`, unique index; ADR-0005).
-- Containers: backend non-root, no published backend port, log rotation (10 MB × 3).
+- Containers: backend non-root, no published backend port, log rotation (10 MB × 3); both
+  containers `no-new-privileges`, `cap_drop: ALL` (web keeps `NET_BIND_SERVICE`), read-only root
+  FS with a `/tmp` tmpfs.
+- Browser: CSP `script-src 'self'` (no inline scripts), `frame-ancestors 'none'`, nosniff,
+  Referrer-Policy, Permissions-Policy, HSTS (this host only); every API value is escaped before
+  `innerHTML`; writes from another site (`Sec-Fetch-Site`/`Origin`) → 403.
+- Limits: request bodies 64 KB (Caddy and the app), amounts ≤ 10⁹, text fields bounded; CSV
+  export neutralises spreadsheet formulas.
+- Threat model, audit findings and accepted risks: `docs/SECURITY.md`.

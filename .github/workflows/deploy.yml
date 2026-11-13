@@ -37,8 +37,9 @@ jobs:
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Compute image names, tag and version
         id: meta
         run: |
@@ -52,19 +53,17 @@ jobs:
             echo "version=${version}"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-qemu-action@v4
-
-      - uses: docker/setup-buildx-action@v4
-
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push backend
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: backend
           push: true
@@ -79,7 +78,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend
 
       - name: Build and push web
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: web/Dockerfile
@@ -100,7 +99,8 @@ jobs:
     # Skipped (pipeline stays green) until the server is configured and DEPLOY_ENABLED=true.
     if: ${{ !cancelled() && !failure() && vars.DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 3 pull attempts × PULL_TIMEOUT (480 s) + backup + health check must fit (bot PR #8).
+    timeout-minutes: 30
     environment: production
     permissions:
       contents: read
@@ -113,9 +113,10 @@ jobs:
       DEPLOY_DIR: /opt/finance-tracker
       IMAGE_TAG: ${{ inputs.image_tag || needs.build.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: deploy
+          persist-credentials: false
 
       - name: Check inputs
         run: |
@@ -142,13 +143,16 @@ jobs:
             deploy/docker-compose.prod.yml deploy/deploy.sh deploy/bot-token.sh \
             "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/"
 
-      - name: Deploy ${{ env.IMAGE_TAG }} (health check + automatic rollback)
+      - name: Deploy ${{ env.IMAGE_TAG }} (backup, health check, automatic rollback)
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Through env, not ${{ }} inside the script (no template injection into the shell).
+          REGISTRY_USER: ${{ github.actor }}
         run: |
+          [[ "$REGISTRY_USER" =~ ^[A-Za-z0-9-]+(\[bot\])?$ ]] || { echo "::error::bad actor"; exit 1; }
           printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
             -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            "chmod +x $DEPLOY_DIR/deploy.sh $DEPLOY_DIR/bot-token.sh && $DEPLOY_DIR/deploy.sh '$IMAGE_TAG' '$IMAGE_PREFIX' '${{ github.actor }}'"
+            "chmod +x $DEPLOY_DIR/deploy.sh $DEPLOY_DIR/bot-token.sh && $DEPLOY_DIR/deploy.sh '$IMAGE_TAG' '$IMAGE_PREFIX' '$REGISTRY_USER'"
 
       - name: Remove SSH key
         if: always()

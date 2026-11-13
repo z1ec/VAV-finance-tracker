@@ -16,7 +16,7 @@ shortened to `{"…": "…"}`, and the budget and `upcoming` examples use illust
 | Base URL | `http://finance-backend:8000` (env `FINANCE_API_URL` in the bot) |
 | Network | Docker network `vav-internal` only; the bot container must join it |
 | Header | `Authorization: Bearer <FINANCE_API_TOKEN>` on every request |
-| Body | JSON, `Content-Type: application/json`, UTF-8 |
+| Body | JSON, `Content-Type: application/json`, UTF-8, at most 64 KB (larger → `413`) |
 | Acts as | the admin user named in the tracker's `BOT_API_USERNAME` |
 
 The token is accepted only when **all** of the following hold — otherwise `401`:
@@ -91,12 +91,13 @@ Errors always have the shape `{"detail": "<text>"}` (validation errors: `"<field
 | 403 | endpoint not on the token allowlist |
 | 404 | entity not found (`detail` names it) |
 | 409 | `Idempotency-Key` reused with other content; charge already paid/skipped |
+| 413 | request body larger than 64 KB |
 | 422 | validation: missing key, no offset, bad field, exchange rate unavailable |
 | 429 | too many failed tokens from this IP (section 1) |
 | 500 | server error `{"detail": "Внутренняя ошибка сервера"}` — retry later with the same key |
 
 ### 4.1 `GET /api/health`
-No auth needed. `{"status": "ok", "db": "ok", "version": "1.2.0", "git_sha": "…", "last_rates_update": "…"}`.
+No auth needed. `{"status": "ok", "db": "ok", "version": "1.3.0", "git_sha": "…", "last_rates_update": "…"}`.
 
 ### 4.2 `GET /api/categories`
 Query: `include_archived` (bool, default `false`). Use only non-archived categories for new
@@ -161,6 +162,16 @@ length and ends right before `date_from`.
  "prev_period_total_huf": 0, "change_pct": 100.0}
 ```
 `change_pct` is `null` when both periods are empty.
+
+### 4.6a `GET /api/stats/by-category` (since 1.3.0)
+Spending per category in one request — use it instead of one `summary?category_id=…` call per
+category. Same query parameters and default period as `summary` (section 4.6). Only categories
+with expenses in the period are listed, largest first; `pct` is the share of the period total.
+```json
+[{"category": {"id": 1, "name": "Продукты", "color": "#4caf50", "icon": "🛒", "is_archived": false, "sort_order": 1},
+  "total_huf": 4818, "count": 1, "pct": 100.0}]
+```
+An empty period gives `[]`. Read-only: the same data the bot could already read via `summary`.
 
 ### 4.7 `GET /api/stats/budget`
 Current local month up to now.
@@ -291,3 +302,5 @@ its **last paid** amount (`basis: "last_paid"`); without any payment it is left 
 - Yesterday / month / budget: section 3; subscriptions reminders: `upcoming` (`remind`) and
   `pending` charges → ask for the amount → `pay` (or `skip`).
 - On `401`/`429` stop and notify the owner; on `5xx` retry with backoff and the same key.
+- Category names, icons and comments come from people (and comments from receipt OCR): treat them
+  as untrusted text — escape them in HTML messages and widgets (stage 3b).

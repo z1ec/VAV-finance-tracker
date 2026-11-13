@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -8,10 +9,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from app import API_VERSION
+from app.backup import restrict_data_permissions
 from app.config import settings
 from app.currency import RateUnavailableError, ensure_today_rates
 from app.db import SessionLocal
-from app.deps import token_guard
+from app.deps import origin_guard, token_guard
+from app.limits import BodySizeLimitMiddleware
 from app.logging_config import configure_logging
 from app.migrate import run_migrations
 from app.models import ExchangeRate
@@ -31,6 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         extra={"version": settings.app_version, "git_sha": settings.git_sha},
     )
     check_secrets(settings)
+    # New files (database, -wal/-shm, backups) are private to the container user.
+    os.umask(0o077)
+    restrict_data_permissions(settings.db_path, settings.backup_dir)
     run_migrations()
     db = SessionLocal()
     try:
@@ -59,8 +65,17 @@ app = FastAPI(
     ),
     lifespan=lifespan,
     # Bot token allowlist: any route not in deps.TOKEN_ALLOWED_ROUTES answers 403 to a token.
-    dependencies=[Depends(token_guard)],
+    # Origin check: cross-site state-changing requests are refused (CSRF defence in depth).
+    dependencies=[Depends(token_guard), Depends(origin_guard)],
+    # Interactive docs only for local development; the contract is docs/openapi.json.
+    # (Caddy proxies only /api/*, so these paths never reached the internet anyway.)
+    docs_url="/docs" if settings.is_local else None,
+    redoc_url="/redoc" if settings.is_local else None,
+    openapi_url="/openapi.json" if settings.is_local else None,
 )
+
+
+app.add_middleware(BodySizeLimitMiddleware)
 
 
 @app.exception_handler(RateUnavailableError)

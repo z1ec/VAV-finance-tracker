@@ -16,7 +16,9 @@ ARG APP_VERSION=dev
 ARG GIT_SHA=local
 
 # sqlite3 CLI: manual backups/inspection (`sqlite3 /data/expenses.db ".backup ..."`).
+# `upgrade`: Debian security fixes published after the base image was built (trivy, stage 3b).
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends sqlite3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 tracker \

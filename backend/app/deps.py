@@ -7,10 +7,11 @@ and only on the endpoints listed in ``TOKEN_ALLOWED_ROUTES``; everything else an
 """
 
 import logging
+import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.routing import APIRoute
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -37,6 +38,7 @@ TOKEN_ALLOWED_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("DELETE", "/api/expenses/{expense_id}"),
         ("POST", "/api/expenses/{expense_id}/restore"),
         ("GET", "/api/stats/summary"),
+        ("GET", "/api/stats/by-category"),
         ("GET", "/api/stats/budget"),
         ("GET", "/api/subscriptions"),
         ("POST", "/api/subscriptions"),
@@ -76,16 +78,64 @@ def _unauthorized(detail: str, bearer: bool = False) -> HTTPException:
     return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail, headers=headers)
 
 
+def _template_regex(template: str) -> re.Pattern[str]:
+    """``/api/expenses/{expense_id}`` → ``^/api/expenses/[^/]+$`` (one path segment per param)."""
+    parts = re.split(r"(\{[^}/]+\})", template)
+    body = "".join("[^/]+" if part.startswith("{") else re.escape(part) for part in parts)
+    return re.compile(f"^{body}$")
+
+
+# Matched against the request path itself, not ``scope["route"]``: what a route object exposes
+# changed between FastAPI versions (routes of included routers lost their prefix in 0.14x),
+# and the guard must not depend on that. Fails closed: an unknown path is never allowed.
+_TOKEN_ALLOWED_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (method, _template_regex(path)) for method, path in sorted(TOKEN_ALLOWED_ROUTES)
+)
+
+
+def token_route_allowed(method: str, path: str) -> bool:
+    return any(method == m and pattern.match(path) for m, pattern in _TOKEN_ALLOWED_PATTERNS)
+
+
 def token_guard(request: Request) -> None:
     """App-wide dependency: a request with ``Authorization`` may only reach allowed routes."""
     if "authorization" not in request.headers:
         return
-    route = request.scope.get("route")
-    path = route.path if isinstance(route, APIRoute) else request.url.path
-    if (request.method, path) not in TOKEN_ALLOWED_ROUTES:
+    # scope["path"] is the decoded path the router matched (the app has no root_path).
+    if not token_route_allowed(request.method, request.scope.get("path", "")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Эндпоинт недоступен для токена бота"
         )
+
+
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def origin_guard(request: Request) -> None:
+    """App-wide CSRF defence in depth for cookie sessions (``SameSite=Lax`` is the first line).
+
+    A state-changing request that a browser marks as coming from another site, or whose
+    ``Origin`` is not this host, is refused. Requests without these headers (the bot, curl,
+    tests) are not affected; the bot's token requests carry no cookie anyway.
+    """
+    if request.method not in UNSAFE_METHODS:
+        return
+    fetch_site = request.headers.get("sec-fetch-site")
+    if fetch_site in {"cross-site", "same-site"}:
+        raise _csrf_refused()
+    origin = request.headers.get("origin")
+    if origin is None:
+        return
+    host = request.headers.get("host", "")
+    parsed = urlsplit(origin)
+    if origin == "null" or parsed.scheme not in {"http", "https"} or parsed.netloc != host:
+        raise _csrf_refused()
+
+
+def _csrf_refused() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN, detail="Запрос с другого сайта отклонён"
+    )
 
 
 def _authenticate_token(request: Request, db: Session, header: str) -> Actor:

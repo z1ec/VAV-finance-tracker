@@ -13,10 +13,25 @@
 # Health: the backend container must report Docker `healthy`, and the public URL
 # https://$DOMAIN/api/health must answer {"status":"ok"} through Caddy (resolved to 127.0.0.1).
 #
+# Image pull: every attempt runs under `timeout` (PULL_TIMEOUT) and is retried PULL_ATTEMPTS
+# times; a stalled registry download fails the deploy before anything is changed (the bot's
+# stage 2b incident, fixed there in PR #8).
+#
+# Database safety (a new image may migrate the database; the previous image cannot start on a
+# newer schema — alembic does not know the revision): after the pull and before the new tag
+# starts, the running backend backs its SQLite database up with the sqlite3 backup API
+# (`docker exec … python -c …`; works with every image) and the alembic revision is remembered.
+# If the new tag is not healthy and the revision changed, the backend is stopped, the migrated
+# database (with -wal/-shm) is kept as expenses.db.failed-<tag>, the backup is restored and only
+# then the previous tag starts. Every database file operation runs inside a backend container as
+# its user (uid 10001): ./data on the server is not readable by the deploy user. A failed backup
+# stops the deploy before anything changes. Nothing is ever deleted on failure.
+#
 # State files in DEPLOY_DIR: .last_successful_tag (current), .previous_successful_tag.
 #
 # Environment overrides (mostly for tests): DEPLOY_DIR, DOMAIN, HEALTH_TIMEOUT,
-# HEALTH_POLL_INTERVAL, DOCKER (docker binary), CURL (curl binary), REGISTRY, NETWORK.
+# HEALTH_POLL_INTERVAL, PULL_TIMEOUT, PULL_ATTEMPTS, PULL_RETRY_DELAY, PRE_DEPLOY_KEEP,
+# DOCKER (docker binary), CURL (curl binary), REGISTRY, NETWORK.
 set -euo pipefail
 
 TAG="${1:?usage: deploy.sh <image_tag> [image_prefix] [registry_user]}"
@@ -25,6 +40,10 @@ REGISTRY_USER="${3:-${REGISTRY_USER:-}}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/finance-tracker}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 HEALTH_POLL_INTERVAL="${HEALTH_POLL_INTERVAL:-3}"
+# A stalled registry download must not hang the deploy until the CI job is killed.
+PULL_TIMEOUT="${PULL_TIMEOUT:-480}"
+PULL_ATTEMPTS="${PULL_ATTEMPTS:-3}"
+PULL_RETRY_DELAY="${PULL_RETRY_DELAY:-10}"
 DOCKER="${DOCKER:-docker}"
 CURL="${CURL:-curl}"
 REGISTRY="${REGISTRY:-ghcr.io}"
@@ -35,6 +54,67 @@ LAST_TAG_FILE="${DEPLOY_DIR}/.last_successful_tag"
 PREVIOUS_TAG_FILE="${DEPLOY_DIR}/.previous_successful_tag"
 SERVICES=(backend web)
 DATA_UID=10001
+# ./data on the host is /data in the backend container (docker-compose.prod.yml).
+CONTAINER_DATA="/data"
+DB_NAME="expenses.db"
+# Pre-deploy backups kept after a successful deploy (nightly/pre-migrate ones rotate in the app).
+PRE_DEPLOY_KEEP="${PRE_DEPLOY_KEEP:-10}"
+BACKUP_NAME=""
+BACKUP_REVISION=""
+
+# Online backup + integrity check; prints the alembic revision ("none": no database yet).
+# Python stdlib only, so it runs in every image of the backend.
+BACKUP_PY='import os, sqlite3, sys
+src_path, dst_path = sys.argv[1], sys.argv[2]
+if not os.path.exists(src_path):
+    print("none")
+    sys.exit(0)
+os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+src = sqlite3.connect(src_path)
+try:
+    row = src.execute("select version_num from alembic_version").fetchone()
+except sqlite3.OperationalError:
+    row = None
+dst = sqlite3.connect(dst_path)
+src.backup(dst)
+check = dst.execute("pragma quick_check").fetchone()[0]
+dst.close()
+src.close()
+os.chmod(dst_path, 0o600)
+if check != "ok" or os.path.getsize(dst_path) == 0:
+    sys.exit("backup integrity check failed: " + check)
+print(row[0] if row else "unknown")'
+
+# Read-only: the current alembic revision of the database.
+REVISION_PY='import os, sqlite3, sys
+if not os.path.exists(sys.argv[1]):
+    print("none")
+    sys.exit(0)
+con = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+try:
+    row = con.execute("select version_num from alembic_version").fetchone()
+except sqlite3.OperationalError:
+    row = None
+print(row[0] if row else "unknown")'
+
+# $1 = suffix (failed-<tag>), $2 = backup file name. Keeps the migrated files, restores the
+# backup; prints the suffix used. Nothing is deleted.
+# shellcheck disable=SC2016  # expanded by sh inside the container, not here
+RESTORE_SH='set -eu
+cd /data
+test -s "backups/$2"
+suffix="$1"
+if [ -e "expenses.db.$suffix" ]; then suffix="$suffix-$(date -u +%Y%m%dT%H%M%SZ)"; fi
+for ext in "" -wal -shm; do
+  if [ -e "expenses.db$ext" ]; then mv "expenses.db$ext" "expenses.db.$suffix$ext"; fi
+done
+cp "backups/$2" expenses.db
+echo "$suffix"'
+
+# $1 = how many pre-deploy backups to keep (newest first).
+# shellcheck disable=SC2016  # expanded by sh inside the container, not here
+PRUNE_SH='cd /data/backups 2>/dev/null || exit 0
+ls -1t pre-deploy-*.db 2>/dev/null | tail -n +"$(($1 + 1))" | while read -r f; do rm -f "$f"; done'
 
 log() { printf '[deploy] %s\n' "$*"; }
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -91,12 +171,108 @@ check_data_dir() {
   fi
 }
 
-start_tag() {
+compose_pull() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=10 "${PULL_TIMEOUT}" env IMAGE_PREFIX="${IMAGE_PREFIX}" \
+      IMAGE_TAG="${CURRENT_TAG}" "${DOCKER}" compose --project-name "${PROJECT}" \
+      --file "${COMPOSE_FILE}" pull --quiet "${SERVICES[@]}"
+  else
+    compose pull --quiet "${SERVICES[@]}"
+  fi
+}
+
+pull_images() {
+  local attempt=1
+  while true; do
+    log "pulling ${IMAGE_PREFIX}-{backend,web}:${CURRENT_TAG} (attempt ${attempt}/${PULL_ATTEMPTS}, timeout ${PULL_TIMEOUT}s)"
+    if compose_pull; then
+      return 0
+    fi
+    if [ "${attempt}" -ge "${PULL_ATTEMPTS}" ]; then
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep "${PULL_RETRY_DELAY}"
+  done
+}
+
+pull_tag() {
   CURRENT_TAG="$1"
-  log "pulling ${IMAGE_PREFIX}-{backend,web}:${CURRENT_TAG}"
-  compose pull --quiet "${SERVICES[@]}"
+  pull_images || die "could not pull ${IMAGE_PREFIX}-{backend,web}:${CURRENT_TAG} after ${PULL_ATTEMPTS} attempts"
+}
+
+up_tag() {
+  CURRENT_TAG="$1"
   log "starting ${CURRENT_TAG}"
   compose up --detach --remove-orphans "${SERVICES[@]}"
+}
+
+start_tag() {
+  pull_tag "$1"
+  up_tag "$1"
+}
+
+# in_backend <tag> <program> <args…>: run in the running backend container, or in a one-off
+# container of image tag <tag> when it is not running (as the container user in both cases).
+in_backend() {
+  local tag="$1" program="$2" container
+  shift 2
+  CURRENT_TAG="${tag}"
+  container="$(compose ps --quiet backend 2>/dev/null || true)"
+  if [ -n "${container}" ]; then
+    "${DOCKER}" exec "${container}" "${program}" "$@"
+  else
+    compose run --rm --no-deps -T --entrypoint "${program}" backend "$@"
+  fi
+}
+
+backup_database() {
+  # Called after the pull and before the new tag starts: the old version is still running.
+  local tag="$1" stamp out
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  BACKUP_NAME="pre-deploy-${TAG}-${stamp}.db"
+  log "pre-deploy backup of ${DB_NAME} (running version: ${tag})"
+  if ! out="$(in_backend "${tag}" python -c "${BACKUP_PY}" "${CONTAINER_DATA}/${DB_NAME}" \
+      "${CONTAINER_DATA}/backups/${BACKUP_NAME}")"; then
+    die "pre-deploy backup failed; ${TAG} was not started"
+  fi
+  BACKUP_REVISION="$(printf '%s\n' "${out}" | tail -n 1)"
+  case "${BACKUP_REVISION}" in
+    none)
+      BACKUP_NAME=""
+      log "no database yet: nothing to back up"
+      return 0 ;;
+    "") die "pre-deploy backup printed no revision; ${TAG} was not started" ;;
+  esac
+  log "pre-deploy backup: data/backups/${BACKUP_NAME} (alembic revision ${BACKUP_REVISION})"
+}
+
+restore_if_migrated() {
+  # The new tag failed. If it changed the schema, the previous tag cannot run on this
+  # database: stop the backend, keep the migrated files, restore the pre-deploy backup.
+  local previous="$1" revision kept
+  [ -n "${BACKUP_NAME}" ] || return 0
+  CURRENT_TAG="${TAG}"
+  log "stopping the backend of ${TAG} before checking the database"
+  compose stop backend || true
+  revision="$(in_backend "${previous}" python -c "${REVISION_PY}" "${CONTAINER_DATA}/${DB_NAME}" \
+    | tail -n 1 || true)"
+  if [ "${revision}" = "${BACKUP_REVISION}" ]; then
+    log "alembic revision unchanged (${revision}): no restore needed"
+    return 0
+  fi
+  log "alembic revision changed: ${BACKUP_REVISION} -> ${revision:-unreadable}"
+  if ! kept="$(in_backend "${previous}" sh -c "${RESTORE_SH}" sh "failed-${TAG}" "${BACKUP_NAME}" \
+      | tail -n 1)"; then
+    die "restore of data/backups/${BACKUP_NAME} failed; ${previous} was not started (see DEPLOYMENT.md)"
+  fi
+  log "restored data/backups/${BACKUP_NAME}; the migrated database is kept as ${DB_NAME}.${kept}"
+}
+
+prune_pre_deploy_backups() {
+  # Runs in the new (healthy) backend; a failure here never fails the deploy.
+  in_backend "${TAG}" sh -c "${PRUNE_SH}" sh "${PRE_DEPLOY_KEEP}" \
+    || log "warning: old pre-deploy backups were not pruned"
 }
 
 backend_status() {
@@ -176,7 +352,9 @@ main() {
   fi
   log "deploying ${TAG} (last successful: ${previous:-none})"
 
-  start_tag "${TAG}"
+  pull_tag "${TAG}"
+  backup_database "${previous:-${TAG}}"
+  up_tag "${TAG}"
   if wait_healthy; then
     record_success "${TAG}" "${previous}"
     log "deployed ${TAG}"
@@ -185,12 +363,15 @@ main() {
       keep_previous="$(cat "${PREVIOUS_TAG_FILE}")"
     fi
     prune_images "${TAG}" "${keep_previous}"
+    prune_pre_deploy_backups
     return 0
   fi
 
+  CURRENT_TAG="${TAG}"
   compose logs --tail 50 "${SERVICES[@]}" || true
   if [ -n "${previous}" ] && [ "${previous}" != "${TAG}" ]; then
     log "rolling back to ${previous}"
+    restore_if_migrated "${previous}"
     start_tag "${previous}"
     if wait_healthy; then
       die "deploy of ${TAG} failed health check; rolled back to ${previous}"

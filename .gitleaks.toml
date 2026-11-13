@@ -1,0 +1,11 @@
+# gitleaks configuration (CI job `security`, docs/SECURITY.md): the default rules plus one
+# narrow allowlist reviewed in stage 3b.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Idempotency-Key example values are request UUIDs (docs, tests), not secrets"
+regexTarget = "line"
+regexes = [
+  '''Idempotency-Key["']?\s*[:=,]\s*["']?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}''',
+]
